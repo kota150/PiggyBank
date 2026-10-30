@@ -1,0 +1,10 @@
+## Interface: 16001, 120107, 120105
+## Title: Piggy Bank
+## Notes: Squirrels away a % of the gold you earn. Smash the piggy to get it back.
+## Author: Kota150
+## Version: 1.1.0
+## SavedVariablesPerCharacter: PiggyBankDB
+## IconTexture: Interface\Icons\Ability_Hunter_Pet_Boar
+## AddonCompartmentFunc: PiggyBank_OnCompartmentClick
+
+PiggyBank.lua
