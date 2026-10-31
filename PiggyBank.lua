@@ -1354,7 +1354,7 @@ for event in pairs(LEGACY_CLOSE) do Register(event) end
 
 events:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "PLAYER_LOGIN" then
-        Print("OINK!! Use /Piggy to open your piggy bank, OINK!!")
+        Print("OINK!! Use /Piggy to open your piggy bank, OINK!! You can also click the gold in your bag OINK OINK!")
         PiggyBankDB = PiggyBankDB or {}
         db = PiggyBankDB
         ApplyDefaults(db, DEFAULTS)
