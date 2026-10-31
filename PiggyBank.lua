@@ -619,7 +619,7 @@ local function Slider(parent, width, minV, maxV, onChange)
     s:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
     s:SetMinMaxValues(minV, maxV)
     s:SetValueStep(1)
-    s:SetObeyStepOnDrag(true)
+    if s.SetObeyStepOnDrag then s:SetObeyStepOnDrag(true) end
     s:EnableMouseWheel(true)
     s:SetScript("OnValueChanged", function(_, value) onChange(math.floor(value + 0.5)) end)
     s:SetScript("OnMouseWheel", function(self, delta) self:SetValue(self:GetValue() + delta) end)
@@ -808,11 +808,50 @@ end
 local function SelectTab(f, id)
     f.selectedTab = id
     for i, page in ipairs(f.pages) do page:SetShown(i == id) end
-    if PanelTemplates_SetTab then PanelTemplates_SetTab(f, id) end
+    if f.realTabs and PanelTemplates_SetTab then
+        PanelTemplates_SetTab(f, id)
+    elseif f.Tabs then
+        -- plain-button fallback: grey out the current tab
+        for i, tab in ipairs(f.Tabs) do tab:SetEnabled(i ~= id) end
+    end
+end
+
+-- Classic clients don't have every modern template, so use the first one that exists.
+local function HasTemplate(template)
+    if not (C_XMLUtil and C_XMLUtil.GetTemplateInfo) then return true end
+    return C_XMLUtil.GetTemplateInfo(template) ~= nil
+end
+
+local function CreateFromFirst(frameType, name, parent, templates)
+    for _, template in ipairs(templates) do
+        if HasTemplate(template) then
+            local ok, frame = pcall(CreateFrame, frameType, name, parent, template)
+            if ok and frame then return frame, template end
+        end
+    end
+    return CreateFrame(frameType, name, parent), nil
+end
+
+local function CreateMainFrame()
+    local f, template = CreateFromFirst("Frame", "PiggyBankFrame", UIParent,
+        { "ButtonFrameTemplate", "BasicFrameTemplateWithInset", "BackdropTemplate" })
+    if template == "BackdropTemplate" then
+        -- Bare-bones fallback: classic dialog border, title and close button
+        f:SetBackdrop({
+            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true, tileSize = 32, edgeSize = 32,
+            insets = { left = 11, right = 12, top = 12, bottom = 11 },
+        })
+        f.TitleText = Label(f, "GameFontNormal", "TOP", 0, -16)
+        local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+        close:SetPoint("TOPRIGHT", -4, -4)
+    end
+    return f
 end
 
 local function CreateWindow()
-    local f = CreateFrame("Frame", "PiggyBankFrame", UIParent, "ButtonFrameTemplate")
+    local f = CreateMainFrame()
     f:SetSize(384, 470)
     f:SetPoint("CENTER")
     f:SetMovable(true)
@@ -847,7 +886,10 @@ local function CreateWindow()
     -- Bottom tabs, like the character sheet
     f.Tabs = {}
     for i, name in ipairs(TAB_NAMES) do
-        local tab = CreateFrame("Button", "PiggyBankFrameTab" .. i, f, "PanelTabButtonTemplate")
+        local tab, template = CreateFromFirst("Button", "PiggyBankFrameTab" .. i, f,
+            { "PanelTabButtonTemplate", "CharacterFrameTabButtonTemplate", "UIPanelButtonTemplate" })
+        f.realTabs = template == "PanelTabButtonTemplate" or template == "CharacterFrameTabButtonTemplate"
+        if not f.realTabs then tab:SetSize(80, 22) end
         tab:SetID(i)
         tab:SetText(name)
         if i == 1 then
@@ -859,10 +901,10 @@ local function CreateWindow()
             Sound("IG_CHARACTER_INFO_TAB")
             SelectTab(f, self:GetID())
         end)
-        if PanelTemplates_TabResize then PanelTemplates_TabResize(tab, 0) end
+        if f.realTabs and PanelTemplates_TabResize then PanelTemplates_TabResize(tab, 0) end
         f.Tabs[i] = tab
     end
-    if PanelTemplates_SetNumTabs then PanelTemplates_SetNumTabs(f, #TAB_NAMES) end
+    if f.realTabs and PanelTemplates_SetNumTabs then PanelTemplates_SetNumTabs(f, #TAB_NAMES) end
     SelectTab(f, 1)
 
     f:SetScript("OnShow", function()
@@ -940,17 +982,22 @@ end
 
 -- Entry in Esc > Options > AddOns, so nobody has to remember a slash command.
 local function RegisterOptionsPanel()
-    if not (Settings and Settings.RegisterCanvasLayoutCategory) then return end
     local panel = CreateFrame("Frame")
+    panel.name = "Piggy Bank"
     Label(panel, "GameFontNormalLarge", "TOPLEFT", 16, -16):SetText("Piggy Bank")
     local desc = Label(panel, "GameFontHighlight", "TOPLEFT", 16, -44)
     desc:SetText("All Piggy Bank settings live in the piggy's own window.")
     Button(panel, "Open Piggy Bank", 160, function()
         if SettingsPanel and SettingsPanel:IsShown() then HideUIPanel(SettingsPanel) end
+        if InterfaceOptionsFrame and InterfaceOptionsFrame:IsShown() then HideUIPanel(InterfaceOptionsFrame) end
         ui.window:Show()
     end):SetPoint("TOPLEFT", 16, -72)
-    local category = Settings.RegisterCanvasLayoutCategory(panel, "Piggy Bank")
-    Settings.RegisterAddOnCategory(category)
+    if Settings and Settings.RegisterCanvasLayoutCategory then
+        local category = Settings.RegisterCanvasLayoutCategory(panel, "Piggy Bank")
+        Settings.RegisterAddOnCategory(category)
+    elseif InterfaceOptions_AddCategory then
+        InterfaceOptions_AddCategory(panel) -- older clients
+    end
 end
 
 -- Click handler for the addon compartment button by the minimap (set in the TOC).
@@ -1142,6 +1189,49 @@ local function HookAuctionHouse()
     end
 end
 
+-- Classic auction house (old AuctionFrame): warn on the Browse tab's Bid and Buyout buttons.
+local function HookClassicAuctionHouse()
+    if hooked.classicAuction then return end
+    if not (AuctionFrameBrowse_Update and BrowseBuyoutButton and GetSelectedAuctionItem) then return end
+    hooked.classicAuction = true
+
+    local function SelectedBuyout()
+        local index = GetSelectedAuctionItem("list")
+        if not index or index == 0 then return 0 end
+        return select(10, GetAuctionItemInfo("list", index)) or 0
+    end
+    local function BidAmount()
+        if not (BrowseBidPrice and MoneyInputFrame_GetCopper) then return 0 end
+        return MoneyInputFrame_GetCopper(BrowseBidPrice) or 0
+    end
+
+    local watched = { { BrowseBuyoutButton, SelectedBuyout } }
+    if BrowseBidButton then table.insert(watched, { BrowseBidButton, BidAmount }) end
+    for _, entry in ipairs(watched) do
+        local button, getPrice = entry[1], entry[2]
+        local warn = WarningIcon(button, getPrice)
+        warn:SetPoint("BOTTOM", button, "TOP", 0, 2)
+        entry[3] = warn
+        button:HookScript("OnEnter", function(self)
+            local price = getPrice()
+            if not WouldDip(price) then return end
+            if GameTooltip:GetOwner() ~= self then GameTooltip:SetOwner(self, "ANCHOR_RIGHT") end
+            AddWarningLines(GameTooltip, price)
+            GameTooltip:Show()
+        end)
+        -- Blizzard shows its own confirmation after this click; the piggy chimes in too
+        button:HookScript("OnClick", function()
+            local price = getPrice()
+            if WouldDip(price) then HeadsUp(price) end
+        end)
+    end
+    hooksecurefunc("AuctionFrameBrowse_Update", function()
+        for _, entry in ipairs(watched) do
+            entry[3]:SetShown(entry[1]:IsShown() and WouldDip(entry[2]()))
+        end
+    end)
+end
+
 -- Auction house commodities: the game confirms the total price before you finalize.
 local function OnCommodityPrice(totalPrice)
     if WouldDip(totalPrice) then HeadsUp(totalPrice) end
@@ -1159,13 +1249,37 @@ for _, key in ipairs({ "Banker", "GuildBanker", "AccountBanker", "TradePartner",
 end
 local TRAINER_INTERACTION = Enum.PlayerInteractionType and Enum.PlayerInteractionType.Trainer
 
+-- Older per-window events, used by Classic clients. Harmless duplicates elsewhere.
+local LEGACY_OPEN = {
+    BANKFRAME_OPENED = "Banker", GUILDBANKFRAME_OPENED = "GuildBanker",
+    TRADE_SHOW = "TradePartner", MAIL_SHOW = "MailInfo", TRAINER_SHOW = "Trainer",
+}
+local LEGACY_CLOSE = {
+    BANKFRAME_CLOSED = "Banker", GUILDBANKFRAME_CLOSED = "GuildBanker",
+    TRADE_CLOSED = "TradePartner", MAIL_CLOSED = "MailInfo", TRAINER_CLOSED = "Trainer",
+}
+
+local function WindowOpened(key)
+    if key == "Trainer" then StartTrainerWatch() return end
+    if key and not (key == "MailInfo" and db.countMail) then busy[key] = true end
+end
+
+local function WindowClosed(key)
+    if key == "Trainer" then StopTrainerWatch() return end
+    -- money updates can land just after the window closes
+    if key and busy[key] then busy[key] = GetTime() + 1 end
+end
+
 local events = CreateFrame("Frame")
-events:RegisterEvent("PLAYER_LOGIN")
-events:RegisterEvent("PLAYER_MONEY")
-events:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_SHOW")
-events:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_HIDE")
-events:RegisterEvent("ADDON_LOADED")
-events:RegisterEvent("COMMODITY_PRICE_UPDATED")
+local function Register(event)
+    pcall(events.RegisterEvent, events, event) -- not every event exists in every game version
+end
+for _, event in ipairs({ "PLAYER_LOGIN", "PLAYER_MONEY", "ADDON_LOADED", "COMMODITY_PRICE_UPDATED",
+    "PLAYER_INTERACTION_MANAGER_FRAME_SHOW", "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" }) do
+    Register(event)
+end
+for event in pairs(LEGACY_OPEN) do Register(event) end
+for event in pairs(LEGACY_CLOSE) do Register(event) end
 
 events:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "PLAYER_LOGIN" then
@@ -1185,6 +1299,7 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2)
         SetupMerchantWarnings()
         HookFlightPaths()
         HookAuctionHouse()
+        HookClassicAuctionHouse()
         Refresh()
     elseif not db then
         return
@@ -1192,20 +1307,20 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2)
         -- Blizzard's flight map and auction house UIs load on demand
         HookFlightPaths()
         HookAuctionHouse()
+        HookClassicAuctionHouse()
     elseif event == "COMMODITY_PRICE_UPDATED" then
         OnCommodityPrice(arg2)
     elseif event == "PLAYER_MONEY" then
         OnMoneyChanged()
         UpdateMerchantWarnings()
     elseif event == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" then
-        local key = NOT_INCOME[arg1]
-        if key and not (key == "MailInfo" and db.countMail) then busy[key] = true end
-        if arg1 == TRAINER_INTERACTION then StartTrainerWatch() end
+        WindowOpened(arg1 == TRAINER_INTERACTION and "Trainer" or NOT_INCOME[arg1])
     elseif event == "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" then
-        local key = NOT_INCOME[arg1]
-        -- money updates can land just after the window closes
-        if key and busy[key] then busy[key] = GetTime() + 1 end
-        if arg1 == TRAINER_INTERACTION then StopTrainerWatch() end
+        WindowClosed(arg1 == TRAINER_INTERACTION and "Trainer" or NOT_INCOME[arg1])
+    elseif LEGACY_OPEN[event] then
+        WindowOpened(LEGACY_OPEN[event])
+    elseif LEGACY_CLOSE[event] then
+        WindowClosed(LEGACY_CLOSE[event])
     end
 end)
 
