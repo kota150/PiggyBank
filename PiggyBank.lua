@@ -631,6 +631,7 @@ end
 ---------------------------------------------------------------------------
 
 local TAB_NAMES = { "Piggy", "Goals", "Stats", "Settings" }
+local TAB_WIDTH = 86
 
 local function BuildPiggyPage(f, page)
     Header(page, "In the Piggy", 0)
@@ -802,7 +803,7 @@ local function BuildSettingsPage(f, page)
     local help = Label(page, "GameFontDisableSmall", "TOPLEFT", 12, -320)
     help:SetWidth(330)
     help:SetJustifyH("LEFT")
-    help:SetText("Prefer typing? /piggy opens this window. Also: /piggy rate 25, /piggy goal 500 Mount, /piggy feed 10, /piggy widget")
+    help:SetText("Prefer typing? /piggy opens this window.\nAlso: /piggy rate 25,  /piggy goal 500 Mount,\n/piggy feed 10,  /piggy widget")
 end
 
 local function SelectTab(f, id)
@@ -810,6 +811,9 @@ local function SelectTab(f, id)
     for i, page in ipairs(f.pages) do page:SetShown(i == id) end
     if f.realTabs and PanelTemplates_SetTab then
         PanelTemplates_SetTab(f, id)
+        if PanelTemplates_TabResize then
+            for _, tab in ipairs(f.Tabs) do PanelTemplates_TabResize(tab, 0, TAB_WIDTH) end
+        end
     elseif f.Tabs then
         -- plain-button fallback: grey out the current tab
         for i, tab in ipairs(f.Tabs) do tab:SetEnabled(i ~= id) end
@@ -901,7 +905,12 @@ local function CreateWindow()
             Sound("IG_CHARACTER_INFO_TAB")
             SelectTab(f, self:GetID())
         end)
-        if f.realTabs and PanelTemplates_TabResize then PanelTemplates_TabResize(tab, 0) end
+        if f.realTabs and PanelTemplates_TabResize then
+            -- Fixed width so all four tabs fit under the window (Classic sizes them wider)
+            local function FitTab(self) PanelTemplates_TabResize(self, 0, TAB_WIDTH) end
+            FitTab(tab)
+            tab:HookScript("OnShow", FitTab)
+        end
         f.Tabs[i] = tab
     end
     if f.realTabs and PanelTemplates_SetNumTabs then PanelTemplates_SetNumTabs(f, #TAB_NAMES) end
