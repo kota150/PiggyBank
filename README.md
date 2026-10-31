@@ -16,7 +16,7 @@ Works with **WoW Forever** and **Retail**.
 - **Smash it.** Whack the piggy 3 times and confirm to release your savings. A broken piggy stops saving until you buy a new one.
 - **Get scolded.** Spend into your savings and the piggy pops up to tell you off with one of 26 painfully cheesy puns.
   > *"That gold was soulbound to the piggy! BoP = Bacon on Purpose!"*
-- **Vendor and trainer warnings.** A ⚠ icon and tooltip flag anything (including Repair All) that would dip into your savings.
+- **Spending warnings.** A ⚠ icon and tooltip flag anything that would dip into your savings at vendors (including Repair All), trainers, flight masters and the auction house. Buying auction house commodities pops up a heads-up before you confirm.
 - **Stats.** Lifetime saved, biggest deposit, goals completed, piggies smashed, times caught raiding the piggy, and more.
 - **Floating piggy.** An optional on-screen piggy showing your savings. It's off by default, and you can lock it in place.
 

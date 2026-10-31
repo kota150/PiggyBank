@@ -70,13 +70,24 @@ local SCOLDS = {
     "Ham-ateur move, champion. Ham-ateur move.",
 }
 
+-- Pops up before an auction house purchase that would dip into savings.
+local HEADS_UPS = {
+    "Whoa there, big spender! This purchase raids the piggy.",
+    "Incoming savings damage! Interrupt now?",
+    "The piggy is watching. And sweating.",
+    "Hold your horses! Unless you're buying a horse. Then REALLY hold them.",
+    "This one's coming out of the piggy. Are you sure, champion?",
+    "Pull! Wait, no, don't pull. This dips into your savings.",
+    "Squeal of disapproval incoming in 3... 2...",
+}
+
 local db
 local lastMoney
 local busy = {}         -- open UIs whose money changes aren't income (bank, trade...)
 local overlays = {}     -- bag money frame -> our replacement display
 local ui = {}
 local whacks, whackToken = 0, 0
-local scoldToken, lastScold = 0, nil
+local scoldToken, lastScold, lastHeadsUp = 0, nil, nil
 
 local Refresh -- forward declaration
 
@@ -165,17 +176,17 @@ local function AddToPiggy(copper)
     CheckGoals()
 end
 
--- Pop the piggy up with a random pun; it goes away again unless it's set to always show.
-local function Scold(remaining)
+local function PickRandom(list, last)
     local i
-    repeat i = math.random(#SCOLDS) until i ~= lastScold or #SCOLDS == 1
-    lastScold = i
-    local msg = SCOLDS[i]
-    Print("|cffff5555" .. msg .. "|r The piggy only holds " .. Money(remaining) .. " now.")
-    Sound("IG_QUEST_FAILED")
+    repeat i = math.random(#list) until i ~= last or #list == 1
+    return list[i], i
+end
 
+-- Pop the piggy up with a speech bubble; it goes away again unless it's set to always show.
+local function PopBubble(msg, r, g, b)
     local f = ui.widget
     if not f or not db.scoldPopup then return end
+    f.bubble:SetBackdropBorderColor(r, g, b)
     f.bubble.text:SetText(msg)
     f.bubble:SetHeight(f.bubble.text:GetStringHeight() + 20)
     f.bubble:Show()
@@ -190,6 +201,24 @@ local function Scold(remaining)
         f.bubble:Hide()
         Refresh()
     end)
+    Refresh()
+end
+
+local function Scold(remaining)
+    local msg
+    msg, lastScold = PickRandom(SCOLDS, lastScold)
+    Print("|cffff5555" .. msg .. "|r The piggy only holds " .. Money(remaining) .. " now.")
+    Sound("IG_QUEST_FAILED")
+    PopBubble(msg, 1, 0.3, 0.3)
+end
+
+-- A heads-up *before* you spend (auction house purchases).
+local function HeadsUp(price)
+    local msg
+    msg, lastHeadsUp = PickRandom(HEADS_UPS, lastHeadsUp)
+    Print("|cffffa500" .. msg .. "|r That's " .. Money(price) .. ", and you only have " .. Money(Spendable()) .. " spendable.")
+    Sound("RAID_WARNING")
+    PopBubble(msg, 1, 0.65, 0)
 end
 
 local function OnMoneyChanged()
@@ -766,8 +795,8 @@ local function BuildSettingsPage(f, page)
     f.soundToggle = CheckBox(page, "Play sounds",
         "Coin clinks, cheers and disappointed noises.",
         function(on) db.sound = on end, "TOPLEFT", f.scoldPopup, "BOTTOMLEFT", 0, -2)
-    f.vendorWarn = CheckBox(page, "Warn me at vendors and trainers",
-        "Shows a warning icon on anything that costs more than your spendable gold, with a tooltip saying you'd be dipping into savings.",
+    f.vendorWarn = CheckBox(page, "Warn me before I spend savings",
+        "Flags anything that costs more than your spendable gold at vendors, trainers, flight masters and the auction house.",
         function(on) db.vendorWarn = on end, "TOPLEFT", f.soundToggle, "BOTTOMLEFT", 0, -2)
 
     local help = Label(page, "GameFontDisableSmall", "TOPLEFT", 12, -320)
@@ -1060,6 +1089,64 @@ local function StopTrainerWatch()
     if trainerWarning then trainerWarning:Hide() end
 end
 
+-- Flight paths: add the warning to the destination tooltip, which already shows the cost.
+local hooked = {}
+
+local function AddFlightWarning(slot)
+    local cost = slot and TaxiNodeCost and TaxiNodeCost(slot)
+    if WouldDip(cost) then
+        AddWarningLines(GameTooltip, cost)
+        GameTooltip:Show()
+    end
+end
+
+local function HookFlightPaths()
+    -- Old flat taxi map
+    if not hooked.taxi and TaxiNodeOnButtonEnter then
+        hooksecurefunc("TaxiNodeOnButtonEnter", function(button) AddFlightWarning(button:GetID()) end)
+        hooked.taxi = true
+    end
+    -- Modern flight map (loads on demand)
+    if not hooked.flightMap and FlightMap_FlightPointPinMixin then
+        hooksecurefunc(FlightMap_FlightPointPinMixin, "OnMouseEnter", function(pin)
+            AddFlightWarning(pin.taxiNodeData and pin.taxiNodeData.slotIndex)
+        end)
+        hooked.flightMap = true
+    end
+end
+
+-- Auction house items: watch the buyout price of the selected listing.
+local auctionWarning
+
+local function HookAuctionHouse()
+    if hooked.auction then return end
+    local buyout = AuctionHouseFrame and AuctionHouseFrame.ItemBuyFrame and AuctionHouseFrame.ItemBuyFrame.BuyoutFrame
+    if not (buyout and buyout.SetPrice) then return end
+    hooked.auction = true
+
+    local button = buyout.BuyoutButton or buyout
+    auctionWarning = WarningIcon(button, function() return auctionWarning.price end)
+    auctionWarning:SetPoint("RIGHT", button, "LEFT", -4, 0)
+    auctionWarning.price = 0
+    hooksecurefunc(buyout, "SetPrice", function(_, price)
+        auctionWarning.price = price or 0
+        auctionWarning:SetShown(WouldDip(auctionWarning.price))
+    end)
+    if button ~= buyout then
+        button:HookScript("OnEnter", function(self)
+            if not WouldDip(auctionWarning.price) then return end
+            if GameTooltip:GetOwner() ~= self then GameTooltip:SetOwner(self, "ANCHOR_RIGHT") end
+            AddWarningLines(GameTooltip, auctionWarning.price)
+            GameTooltip:Show()
+        end)
+    end
+end
+
+-- Auction house commodities: the game confirms the total price before you finalize.
+local function OnCommodityPrice(totalPrice)
+    if WouldDip(totalPrice) then HeadsUp(totalPrice) end
+end
+
 ---------------------------------------------------------------------------
 -- Events
 ---------------------------------------------------------------------------
@@ -1077,8 +1164,10 @@ events:RegisterEvent("PLAYER_LOGIN")
 events:RegisterEvent("PLAYER_MONEY")
 events:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_SHOW")
 events:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_HIDE")
+events:RegisterEvent("ADDON_LOADED")
+events:RegisterEvent("COMMODITY_PRICE_UPDATED")
 
-events:SetScript("OnEvent", function(_, event, arg1)
+events:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "PLAYER_LOGIN" then
         PiggyBankDB = PiggyBankDB or {}
         db = PiggyBankDB
@@ -1094,9 +1183,17 @@ events:SetScript("OnEvent", function(_, event, arg1)
         CreateWindow()
         RegisterOptionsPanel()
         SetupMerchantWarnings()
+        HookFlightPaths()
+        HookAuctionHouse()
         Refresh()
     elseif not db then
         return
+    elseif event == "ADDON_LOADED" then
+        -- Blizzard's flight map and auction house UIs load on demand
+        HookFlightPaths()
+        HookAuctionHouse()
+    elseif event == "COMMODITY_PRICE_UPDATED" then
+        OnCommodityPrice(arg2)
     elseif event == "PLAYER_MONEY" then
         OnMoneyChanged()
         UpdateMerchantWarnings()

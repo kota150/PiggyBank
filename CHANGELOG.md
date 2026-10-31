@@ -5,7 +5,10 @@ All notable changes to Piggy Bank are listed here.
 ## [Unreleased]
 
 ### Added
-- Warnings at vendors and trainers: a ⚠ icon and tooltip flag anything that would dip into your savings, including Repair All. Toggle it in Settings.
+- Warnings at vendors and trainers: a ⚠ icon and tooltip flag anything that would dip into your savings, including Repair All.
+- Flight path warnings in the destination tooltip.
+- Auction house warnings: a ⚠ icon on item buyouts, and a pop-up heads-up (with its own set of puns) before you confirm a commodity purchase.
+- All spending warnings share one setting: **Warn me before I spend savings**.
 - README with screenshots, CHANGELOG and .gitignore.
 
 ### Changed
