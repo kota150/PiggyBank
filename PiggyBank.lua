@@ -499,7 +499,7 @@ local function Header(parent, text, y)
     line:SetPoint("LEFT", fs, "RIGHT", 8, 0)
     line:SetPoint("RIGHT", parent, "RIGHT", -4, 0)
     line:SetColorTexture(1, 0.82, 0, 0.25)
-    return fs
+    return fs, line
 end
 
 local function Button(parent, text, width, onClick)
@@ -631,7 +631,6 @@ end
 ---------------------------------------------------------------------------
 
 local TAB_NAMES = { "Piggy", "Goals", "Stats", "Settings" }
-local TAB_WIDTH = 86
 
 local function BuildPiggyPage(f, page)
     Header(page, "In the Piggy", 0)
@@ -643,14 +642,15 @@ local function BuildPiggyPage(f, page)
     f.spendableCoins = CoinDisplay(page, "GameFontHighlight", 13)
     f.spendableCoins:SetPoint("TOPLEFT", 100, -74)
 
-    Header(page, "Savings Rate", -106)
+    local _, rateLine = Header(page, "Savings Rate", -106)
     f.rateText = Label(page, "GameFontHighlightLarge", "TOPRIGHT", -8, -103)
+    rateLine:SetPoint("RIGHT", f.rateText, "LEFT", -8, 0)
     local minus = Button(page, "-", 24, function() SetRate(db.rate - (IsShiftKeyDown() and 5 or 1)) end)
     minus:SetPoint("TOPLEFT", 10, -132)
-    f.rateSlider = Slider(page, 250, 0, MAX_RATE, function(v) if db and v ~= db.rate then SetRate(v) end end)
-    f.rateSlider:SetPoint("LEFT", minus, "RIGHT", 10, 0)
+    f.rateSlider = Slider(page, 234, 0, MAX_RATE, function(v) if db and v ~= db.rate then SetRate(v) end end)
+    f.rateSlider:SetPoint("LEFT", minus, "RIGHT", 18, 0)
     local plus = Button(page, "+", 24, function() SetRate(db.rate + (IsShiftKeyDown() and 5 or 1)) end)
-    plus:SetPoint("LEFT", f.rateSlider, "RIGHT", 10, 0)
+    plus:SetPoint("LEFT", f.rateSlider, "RIGHT", 18, 0)
     Label(page, "GameFontDisableSmall", "TOPLEFT", f.rateSlider, "BOTTOMLEFT", 0, -2):SetText("0%")
     Label(page, "GameFontDisableSmall", "TOPRIGHT", f.rateSlider, "BOTTOMRIGHT", 0, -2):SetText(MAX_RATE .. "%")
     Label(page, "GameFontHighlightSmall", "TOP", f.rateSlider, "BOTTOM", 0, -2):SetText("of everything you earn")
@@ -679,8 +679,9 @@ local function BuildPiggyPage(f, page)
 end
 
 local function BuildGoalsPage(f, page)
-    Header(page, "Savings Goals", 0)
+    local _, goalsLine = Header(page, "Savings Goals", 0)
     f.goalCount = Label(page, "GameFontHighlightSmall", "TOPRIGHT", -8, -2)
+    goalsLine:SetPoint("RIGHT", f.goalCount, "LEFT", -8, 0)
     f.rows = {}
     for i = 1, MAX_GOALS do
         local row = CreateFrame("Frame", nil, page)
@@ -806,14 +807,32 @@ local function BuildSettingsPage(f, page)
     help:SetText("Prefer typing? /piggy opens this window.\nAlso: /piggy rate 25,  /piggy goal 500 Mount,\n/piggy feed 10,  /piggy widget")
 end
 
+-- Size tabs to fit their text. If they don't fit under the window (Classic's tab art has
+-- wide see-through edges), overlap them like Blizzard's Classic frames do, and widen the
+-- window if they still don't fit.
+local function LayoutTabs(f)
+    if not f.realTabs then return end
+    local total = 0
+    for _, tab in ipairs(f.Tabs) do
+        if PanelTemplates_TabResize then PanelTemplates_TabResize(tab, 0) end
+        total = total + tab:GetWidth()
+    end
+    local gap = 3
+    if total + gap * (#f.Tabs - 1) + 11 > f:GetWidth() then gap = -16 end
+    for i = 2, #f.Tabs do
+        f.Tabs[i]:ClearAllPoints()
+        f.Tabs[i]:SetPoint("TOPLEFT", f.Tabs[i - 1], "TOPRIGHT", gap, 0)
+    end
+    local needed = total + gap * (#f.Tabs - 1) + 11 + 8
+    if needed > f:GetWidth() then f:SetWidth(needed) end
+end
+
 local function SelectTab(f, id)
     f.selectedTab = id
     for i, page in ipairs(f.pages) do page:SetShown(i == id) end
     if f.realTabs and PanelTemplates_SetTab then
         PanelTemplates_SetTab(f, id)
-        if PanelTemplates_TabResize then
-            for _, tab in ipairs(f.Tabs) do PanelTemplates_TabResize(tab, 0, TAB_WIDTH) end
-        end
+        LayoutTabs(f)
     elseif f.Tabs then
         -- plain-button fallback: grey out the current tab
         for i, tab in ipairs(f.Tabs) do tab:SetEnabled(i ~= id) end
@@ -905,12 +924,6 @@ local function CreateWindow()
             Sound("IG_CHARACTER_INFO_TAB")
             SelectTab(f, self:GetID())
         end)
-        if f.realTabs and PanelTemplates_TabResize then
-            -- Fixed width so all four tabs fit under the window (Classic sizes them wider)
-            local function FitTab(self) PanelTemplates_TabResize(self, 0, TAB_WIDTH) end
-            FitTab(tab)
-            tab:HookScript("OnShow", FitTab)
-        end
         f.Tabs[i] = tab
     end
     if f.realTabs and PanelTemplates_SetNumTabs then PanelTemplates_SetNumTabs(f, #TAB_NAMES) end
@@ -918,6 +931,7 @@ local function CreateWindow()
 
     f:SetScript("OnShow", function()
         Sound("IG_CHARACTER_INFO_OPEN")
+        C_Timer.After(0, function() LayoutTabs(f) end) -- after the tabs' own OnShow resize
         Refresh()
     end)
     f:SetScript("OnHide", function() Sound("IG_CHARACTER_INFO_CLOSE") end)
