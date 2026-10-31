@@ -2,18 +2,23 @@
 
 All notable changes to Piggy Bank are listed here.
 
-## [Unreleased]
+## [1.2.0] - 2026-10-31
 
 ### Added
 - Warnings at vendors and trainers: a ⚠ icon and tooltip flag anything that would dip into your savings, including Repair All.
 - Flight path warnings in the destination tooltip.
 - Auction house warnings: a ⚠ icon on item buyouts, and a pop-up heads-up (with its own set of puns) before you confirm a commodity purchase.
 - All spending warnings share one setting: **Warn me before I spend savings**.
+- **Bagnon support:** Bagnon's money display shows only spendable gold too. Other characters' bags are left alone.
 - **Classic Era support** (`PiggyBank_Vanilla.toc`): fallbacks for window parts older clients lack, the older bank/trade/mail/trainer events, an Interface Options entry, and warnings on the classic auction house's Bid and Buyout buttons.
-- README with screenshots, CHANGELOG and .gitignore.
 
 ### Changed
-- Retail TOC interface version set to 120105.
+- Retail TOC interface version set to 120105, Classic Era to 11509.
+
+### Fixed
+- Window tabs now fit their labels (they were cut off in Classic).
+- Header lines no longer run underneath the goal count and savings rate.
+- The savings rate slider no longer touches the + button.
 
 ## [1.1.0] - 2026-10-30
 

@@ -353,9 +353,35 @@ local function HideTooltip() GameTooltip:Hide() end
 -- Bag money display: hide the real total, show spendable instead
 ---------------------------------------------------------------------------
 
-local function CreateOverlay(moneyFrame)
-    if not moneyFrame or overlays[moneyFrame] then return end
+-- Bag addons whose money frames we cover too. They can show other characters' bags,
+-- so those overlays only apply when the frame is showing *your* gold.
+-- Each entry is a bag window name; its money display is the window's .MoneyFrame.
+local BAG_ADDON_WINDOWS = {
+    "BagnonInventory%d",
+    "BagnonBank%d",
+}
+
+local function ShouldHide(moneyFrame, o)
+    if not db.hideReal then return false end
+    if o.checkOwner and o.shownMoney and o.shownMoney ~= GetMoney() then return false end
+    return true
+end
+
+local function RefreshOverlays()
+    local text = Money(Spendable())
+    for moneyFrame, o in pairs(overlays) do
+        local hide = ShouldHide(moneyFrame, o)
+        moneyFrame:SetAlpha(hide and 0 or 1)
+        o:SetShown(hide)
+        o.text:SetText(text)
+        o.icon:SetDesaturated(db.broken)
+    end
+end
+
+local function CreateOverlay(moneyFrame, checkOwner)
+    if not moneyFrame or overlays[moneyFrame] or not moneyFrame:GetParent() then return end
     local o = CreateFrame("Button", nil, moneyFrame:GetParent())
+    o.checkOwner = checkOwner
     o:SetAllPoints(moneyFrame)
     o:SetFrameLevel(moneyFrame:GetFrameLevel() + 5)
 
@@ -369,23 +395,45 @@ local function CreateOverlay(moneyFrame)
     o:SetScript("OnEnter", ShowTooltip)
     o:SetScript("OnLeave", HideTooltip)
     o:SetScript("OnClick", function() ui.ToggleWindow() end)
-    moneyFrame:HookScript("OnShow", function(self) self:SetAlpha(db.hideReal and 0 or 1) end)
+    moneyFrame:HookScript("OnShow", RefreshOverlays)
     overlays[moneyFrame] = o
+    RefreshOverlays()
+end
+
+-- Bag addons create their frames the first time you open your bags.
+local function ScanBagAddons()
+    for _, pattern in ipairs(BAG_ADDON_WINDOWS) do
+        for i = 1, 10 do
+            local window = _G[pattern:format(i)]
+            if window and window.MoneyFrame then CreateOverlay(window.MoneyFrame, true) end
+        end
+    end
 end
 
 local function SetupBagOverlays()
     CreateOverlay(ContainerFrameCombinedBags and ContainerFrameCombinedBags.MoneyFrame)
     CreateOverlay(_G.ContainerFrame1MoneyFrame)
-end
 
-local function RefreshOverlays()
-    local text = Money(Spendable())
-    for moneyFrame, o in pairs(overlays) do
-        moneyFrame:SetAlpha(db.hideReal and 0 or 1)
-        o:SetShown(db.hideReal)
-        o.text:SetText(text)
-        o.icon:SetDesaturated(db.broken)
+    -- Remember what each money frame is showing, to tell your bags from an alt's
+    hooksecurefunc("MoneyFrame_Update", function(frame, money)
+        if type(frame) == "string" then frame = _G[frame] end
+        local o = frame and overlays[frame]
+        if o then
+            o.shownMoney = money
+            RefreshOverlays()
+        end
+    end)
+
+    local function OnBagsToggled()
+        C_Timer.After(0.05, function()
+            ScanBagAddons()
+            RefreshOverlays()
+        end)
     end
+    for _, name in ipairs({ "ToggleAllBags", "OpenAllBags", "ToggleBackpack", "OpenBackpack", "ToggleBag" }) do
+        if _G[name] then hooksecurefunc(name, OnBagsToggled) end
+    end
+    ScanBagAddons()
 end
 
 ---------------------------------------------------------------------------

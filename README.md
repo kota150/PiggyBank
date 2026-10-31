@@ -9,7 +9,7 @@ Works with **WoW Forever**, **Classic Era** (Vanilla, Hardcore, Season of Discov
 ## Features
 
 - **Automatic savings.** Pick a rate from 0–90% and that share of every gold gain goes into the piggy.
-- **Hidden gold.** Your bag money counter shows only your *spendable* gold. Hover over it for the full breakdown.
+- **Hidden gold.** Your bag money counter shows only your *spendable* gold. Hover over it for the full breakdown. Works with the default bags and **Bagnon**.
 - **Smart income tracking.** Gold you pull out of your bank, warband bank or guild bank, or get in a trade, isn't counted as earnings. Mailbox gold (auction sales) counts unless you turn it off.
 - **Savings goals.** Set up to 5 goals in gold, silver and copper, each with a progress bar. You get a raid-warning cheer when you reach one.
 - **Feed the piggy.** Drop in extra gold by hand.
