@@ -13,7 +13,7 @@ Works with **WoW Forever**, **Classic Era** (Vanilla, Hardcore, Season of Discov
 - **Smart income tracking.** Gold you pull out of your bank, warband bank or guild bank, or get in a trade, isn't counted as earnings. Mailbox gold (auction sales) counts unless you turn it off.
 - **Savings goals.** Set up to 5 goals in gold, silver and copper, each with a progress bar. You get a raid-warning cheer when you reach one.
 - **Feed the piggy.** Drop in extra gold by hand.
-- **Smash it.** Whack the piggy 3 times and confirm to release your savings. A broken piggy stops saving until you buy a new one.
+- **Smash it.** Whack the piggy 3 times and confirm to release your savings. A broken piggy stops saving until you start a new one (free, one click).
 - **Get scolded.** Spend into your savings and the piggy pops up to tell you off with one of 26 painfully cheesy puns.
   > *"That gold was soulbound to the piggy! BoP = Bacon on Purpose!"*
 - **Spending warnings.** A ⚠ icon and tooltip flag anything that would dip into your savings at vendors (including Repair All), trainers, flight masters and the auction house. Buying auction house commodities (or clicking Bid / Buyout in Classic) pops up a heads-up before you confirm.

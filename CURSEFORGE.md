@@ -17,7 +17,7 @@ Works with **Classic Era** (Vanilla, Hardcore, Season of Discovery), **WoW Forev
 - **Smart income tracking.** Bank, guild bank and trade gold isn't counted as earnings. Auction sales from the mailbox are optional.
 - **Savings goals.** Up to 5 goals in gold, silver and copper, with progress bars and a cheer when you reach one.
 - **Spending warnings.** Vendors, Repair All, trainers, flight masters and the auction house flag anything that would dip into your savings.
-- **Smash it.** Whack the piggy 3 times to release your savings. A broken piggy stops saving until you buy a new one.
+- **Smash it.** Whack the piggy 3 times to release your savings. A broken piggy stops saving until you start a new one (free, one click).
 - **Get scolded.** Spend your savings and the piggy pops up with one of 26 painfully cheesy puns.
   > *"Hogger is disappointed in you. And Hogger eats people."*
 - **Stats.** Lifetime saved, biggest deposit, goals completed, piggies smashed, times caught raiding the piggy, and more.

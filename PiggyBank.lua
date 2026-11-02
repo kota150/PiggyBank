@@ -20,7 +20,7 @@ local DEFAULTS = {
     rate = 10,          -- % of income that goes into the piggy
     savings = 0,        -- copper currently in the piggy
     lifetime = 0,       -- copper ever saved
-    broken = false,     -- smashed piggies don't save until you buy a new one
+    broken = false,     -- smashed piggies don't save until you start a new one
     hideReal = true,    -- replace the bag money display with spendable gold
     countMail = true,   -- count mailbox gold (auction sales etc.) as income
     scoldPopup = true,  -- pop the piggy up when you spend your savings
@@ -257,7 +257,8 @@ local function BreakPiggy()
     for _, goal in ipairs(db.goals) do goal.reached = false end
     Sound("LOOT_WINDOW_COIN_SOUND")
     Print("|cffffd100*CRASH!*|r " .. Money(released) .. " spills across the floor. It's all spendable again.")
-    Print("Lifetime saved: " .. Money(db.lifetime) .. ". Buy a new piggy to start saving again.")
+    Print("Lifetime saved: " .. Money(db.lifetime) .. ".")
+    Print("Want to keep saving? Open /piggy and click |cffffd100Start a New Piggy|r. No gold needed, it's free!")
     Refresh()
 end
 
@@ -270,7 +271,7 @@ local function NewPiggy()
 end
 
 local function FeedPiggy(copper)
-    if db.broken then Print("The piggy is broken. Buy a new one first.") return false end
+    if db.broken then Print("The piggy is smashed. Open /piggy and click |cffffd100Start a New Piggy|r first. It's free!") return false end
     if copper > Spendable() then Print("You don't have that much spendable gold.") return false end
     AddToPiggy(copper)
     Sound("LOOT_WINDOW_COIN_SOUND")
@@ -301,7 +302,7 @@ local function RemoveGoal(index)
 end
 
 StaticPopupDialogs["PIGGYBANK_BREAK"] = {
-    text = "Smash the piggy bank?\n\n%s will become spendable again, and the piggy stops saving until you buy a new one.",
+    text = "Smash the piggy bank?\n\n%s will become spendable again, and the piggy stops saving.\n\nYou can start a new piggy any time with one click. It doesn't cost anything.",
     button1 = "SMASH!",
     button2 = CANCEL,
     OnAccept = function() BreakPiggy() end,
@@ -334,10 +335,14 @@ end
 
 local function ShowTooltip(owner)
     GameTooltip:SetOwner(owner, "ANCHOR_TOPLEFT")
-    GameTooltip:AddLine("Piggy Bank" .. (db.broken and " |cffff5555(broken)|r" or ""))
+    GameTooltip:AddLine("Piggy Bank" .. (db.broken and " |cffff5555(smashed)|r" or ""))
     GameTooltip:AddDoubleLine("Spendable", Money(Spendable()), 1, 1, 1, 1, 1, 1)
     GameTooltip:AddDoubleLine("In the piggy", Money(db.savings), 1, 0.53, 0.8, 1, 1, 1)
-    GameTooltip:AddDoubleLine("Saving", db.broken and "nothing" or (db.rate .. "% of income"), 0.7, 0.7, 0.7, 0.7, 0.7, 0.7)
+    if db.broken then
+        GameTooltip:AddLine("Not saving. Open the piggy and click Start a New Piggy (free).", 1, 0.82, 0, true)
+    else
+        GameTooltip:AddDoubleLine("Saving", db.rate .. "% of income", 0.7, 0.7, 0.7, 0.7, 0.7, 0.7)
+    end
     for _, goal in ipairs(db.goals) do
         local pct = math.min(100, math.floor(db.savings / goal.target * 100))
         local r, g = goal.reached and 0.2 or 1, goal.reached and 1 or 0.82
@@ -524,7 +529,7 @@ local function RefreshWidget()
     local f = ui.widget
     f:SetShown(db.widget.shown or f.scolding)
     f.icon:SetDesaturated(db.broken)
-    f.savings:SetText(db.broken and "|cffff5555Broken piggy|r" or Money(db.savings))
+    f.savings:SetText(db.broken and "|cffff5555Smashed!|r Click for a new one" or Money(db.savings))
     f.spendable:SetText("Spendable: " .. Money(Spendable()))
     f:SetWidth(math.max(140, 50 + math.max(f.savings:GetStringWidth(), f.spendable:GetStringWidth())))
 end
@@ -720,7 +725,7 @@ local function BuildPiggyPage(f, page)
     breakHelp:SetWidth(330)
     breakHelp:SetJustifyH("LEFT")
     breakHelp:SetText("Need your gold back? Whack the piggy " .. WHACKS_NEEDED ..
-        " times to smash it open. It won't save anything until you buy a new one.")
+        " times to smash it open. It won't save again until you start a new one (free).")
     f.breakBtn = Button(page, "", 220, Whack)
     f.breakBtn:SetHeight(26)
     f.breakBtn:SetPoint("TOP", page, "TOP", 0, -334)
@@ -784,7 +789,7 @@ local function BuildGoalsPage(f, page)
 end
 
 local STAT_ROWS = {
-    { "Current savings rate",       function() return db.broken and "|cffff5555broken|r" or (db.rate .. "%") end },
+    { "Current savings rate",       function() return db.broken and "|cffff5555smashed (start a new one)|r" or (db.rate .. "%") end },
     { "Current piggy's age",        function()
         local since = db.stats.piggySince
         if db.broken or not since then return "-" end
@@ -994,14 +999,14 @@ local function RefreshWindow()
     f.savingsCoins:SetAmount(db.savings)
     f.spendableCoins:SetAmount(Spendable())
     if db.broken then
-        f.status:SetText("|cffff5555This piggy is smashed.|r Buy a new one to start saving again.")
+        f.status:SetText("|cffff5555Smashed!|r Click |cffffd100Start a New Piggy|r below to keep saving. It's free.")
     else
         f.status:SetText("Saving |cffffd100" .. db.rate .. "%|r of everything you earn.")
     end
     f.rateText:SetText(db.rate .. "%")
     f.rateSlider:SetValue(db.rate)
     if db.broken then
-        f.breakBtn:SetText("Buy a New Piggy")
+        f.breakBtn:SetText("Start a New Piggy")
     elseif whacks == 0 then
         f.breakBtn:SetText("Break the Piggy Bank")
     elseif whacks == WHACKS_NEEDED - 1 then
