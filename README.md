@@ -19,6 +19,7 @@ Works with **WoW Forever**, **Classic Era** (Vanilla, Hardcore, Season of Discov
 - **Spending warnings.** A ⚠ icon and tooltip flag anything that would dip into your savings at vendors (including Repair All), trainers, flight masters and the auction house. Buying auction house commodities (or clicking Bid / Buyout in Classic) pops up a heads-up before you confirm.
 - **Stats.** Lifetime saved, biggest deposit, goals completed, piggies smashed, times caught raiding the piggy, and more.
 - **Floating piggy.** An optional on-screen piggy showing your savings. It's off by default, and you can lock it in place.
+- **Minimap button.** Click the piggy on your minimap to open the window. Drag it to move it, or hide it in Settings.
 
 ## Screenshots
 
@@ -53,7 +54,7 @@ If the AddOns list says Piggy Bank is out of date, tick **Load out-of-date AddOn
 Open the piggy any of these ways:
 
 - Type `/piggy`.
-- Click the addon menu button by the minimap.
+- Click the piggy button on your minimap, or the addon menu button next to it.
 - Go to **Esc → Options → AddOns → Piggy Bank**.
 - Click your bag gold counter or the floating piggy.
 

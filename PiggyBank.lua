@@ -28,6 +28,7 @@ local DEFAULTS = {
     sound = true,
     goals = {},         -- { name = "Mount", target = copper, reached = bool, everReached = bool }
     widget = { shown = false, locked = false, point = nil }, -- off by default; pops up to scold you anyway
+    minimap = { shown = true, angle = 225 },                 -- degrees around the minimap edge
     stats = {
         piggySince = nil,   -- time() the current piggy was bought
         incomeSeen = 0,     -- income the piggy took a cut of
@@ -535,6 +536,64 @@ local function RefreshWidget()
 end
 
 ---------------------------------------------------------------------------
+-- Minimap button
+---------------------------------------------------------------------------
+
+local function PlaceMinimapButton(b)
+    local angle = math.rad(db.minimap.angle or 225)
+    local radius = Minimap:GetWidth() / 2 + 10
+    b:ClearAllPoints()
+    b:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * radius, math.sin(angle) * radius)
+end
+
+local function CreateMinimapButton()
+    local b = CreateFrame("Button", "PiggyBankMinimapButton", Minimap)
+    b:SetSize(31, 31)
+    b:SetFrameStrata("MEDIUM")
+    b:SetFrameLevel(8)
+    b:RegisterForClicks("AnyUp")
+    b:RegisterForDrag("LeftButton")
+    b:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+
+    local border = b:CreateTexture(nil, "OVERLAY")
+    border:SetSize(53, 53)
+    border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+    border:SetPoint("TOPLEFT")
+    local bg = b:CreateTexture(nil, "BACKGROUND")
+    bg:SetSize(20, 20)
+    bg:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
+    bg:SetPoint("TOPLEFT", 7, -5)
+    b.icon = b:CreateTexture(nil, "ARTWORK")
+    b.icon:SetSize(17, 17)
+    b.icon:SetTexture(PIG_ICON)
+    b.icon:SetPoint("TOPLEFT", 7, -6)
+
+    -- Drag around the edge of the minimap
+    b:SetScript("OnDragStart", function(self)
+        self:SetScript("OnUpdate", function()
+            local mx, my = Minimap:GetCenter()
+            local cx, cy = GetCursorPosition()
+            local scale = Minimap:GetEffectiveScale()
+            db.minimap.angle = math.deg(math.atan2(cy / scale - my, cx / scale - mx))
+            PlaceMinimapButton(self)
+        end)
+    end)
+    b:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
+    b:SetScript("OnClick", function() ui.ToggleWindow() end)
+    b:SetScript("OnEnter", ShowTooltip)
+    b:SetScript("OnLeave", HideTooltip)
+
+    PlaceMinimapButton(b)
+    ui.minimapButton = b
+end
+
+local function RefreshMinimapButton()
+    local b = ui.minimapButton
+    b:SetShown(db.minimap.shown)
+    b.icon:SetDesaturated(db.broken)
+end
+
+---------------------------------------------------------------------------
 -- Widgets for the main window
 ---------------------------------------------------------------------------
 
@@ -826,9 +885,12 @@ local function BuildSettingsPage(f, page)
     f.hideReal = CheckBox(page, "Show only spendable gold in my bags",
         "Your bag gold counter shows what you can spend. The piggy's share is hidden.",
         function(on) db.hideReal = on; Refresh() end, "TOPLEFT", 8, -20)
+    f.showMinimap = CheckBox(page, "Show the minimap button",
+        "A little piggy on the edge of your minimap. Click it to open this window, drag it to move it.",
+        function(on) db.minimap.shown = on; Refresh() end, "TOPLEFT", f.hideReal, "BOTTOMLEFT", 0, -2)
     f.showWidget = CheckBox(page, "Always show the floating piggy",
         "Keep the little piggy on screen. When off, it only pops up to scold you.",
-        function(on) db.widget.shown = on; Refresh() end, "TOPLEFT", f.hideReal, "BOTTOMLEFT", 0, -2)
+        function(on) db.widget.shown = on; Refresh() end, "TOPLEFT", f.showMinimap, "BOTTOMLEFT", 0, -2)
     f.lockWidget = CheckBox(page, "Lock the floating piggy in place",
         "Stops the floating piggy from being dragged around.",
         function(on) db.widget.locked = on end, "TOPLEFT", f.showWidget, "BOTTOMLEFT", 0, -2)
@@ -838,15 +900,15 @@ local function BuildSettingsPage(f, page)
         Print("The floating piggy is back in the middle of your screen.")
     end):SetPoint("TOPLEFT", f.lockWidget, "BOTTOMLEFT", 4, -4)
 
-    Header(page, "Saving", -142)
+    Header(page, "Saving", -170)
     f.countMail = CheckBox(page, "Count mailbox gold as income",
         "Auction sales and gold mailed to you count as earnings. Turn off if you mail gold between your own characters.",
-        function(on) db.countMail = on end, "TOPLEFT", 8, -162)
+        function(on) db.countMail = on end, "TOPLEFT", 8, -190)
 
-    Header(page, "Nagging", -204)
+    Header(page, "Nagging", -232)
     f.scoldPopup = CheckBox(page, "Scold me when I spend my savings",
         "The piggy pops up with a speech bubble. Chat messages always happen.",
-        function(on) db.scoldPopup = on end, "TOPLEFT", 8, -224)
+        function(on) db.scoldPopup = on end, "TOPLEFT", 8, -252)
     f.soundToggle = CheckBox(page, "Play sounds",
         "Coin clinks, cheers and disappointed noises.",
         function(on) db.sound = on end, "TOPLEFT", f.scoldPopup, "BOTTOMLEFT", 0, -2)
@@ -854,7 +916,7 @@ local function BuildSettingsPage(f, page)
         "Flags anything that costs more than your spendable gold at vendors, trainers, flight masters and the auction house.",
         function(on) db.vendorWarn = on end, "TOPLEFT", f.soundToggle, "BOTTOMLEFT", 0, -2)
 
-    local help = Label(page, "GameFontDisableSmall", "TOPLEFT", 12, -320)
+    local help = Label(page, "GameFontDisableSmall", "TOPLEFT", 12, -348)
     help:SetWidth(330)
     help:SetJustifyH("LEFT")
     help:SetText("Prefer typing? /piggy opens this window.\nAlso: /piggy rate 25,  /piggy goal 500 Mount,\n/piggy feed 10,  /piggy widget")
@@ -928,7 +990,7 @@ end
 
 local function CreateWindow()
     local f = CreateMainFrame()
-    f:SetSize(384, 470)
+    f:SetSize(384, 500)
     f:SetPoint("CENTER")
     f:SetMovable(true)
     f:EnableMouse(true)
@@ -1039,6 +1101,7 @@ local function RefreshWindow()
     f.hideReal:SetChecked(db.hideReal)
     f.showWidget:SetChecked(db.widget.shown)
     f.lockWidget:SetChecked(db.widget.locked)
+    f.showMinimap:SetChecked(db.minimap.shown)
     f.countMail:SetChecked(db.countMail)
     f.scoldPopup:SetChecked(db.scoldPopup)
     f.soundToggle:SetChecked(db.sound)
@@ -1053,6 +1116,7 @@ Refresh = function()
     if not db then return end
     RefreshOverlays()
     RefreshWidget()
+    RefreshMinimapButton()
     RefreshWindow()
 end
 
@@ -1371,6 +1435,7 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2)
         end
         SetupBagOverlays()
         CreateWidget()
+        CreateMinimapButton()
         CreateWindow()
         RegisterOptionsPanel()
         SetupMerchantWarnings()

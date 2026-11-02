@@ -2,6 +2,18 @@
 
 All notable changes to Piggy Bank are listed here.
 
+## [1.3.0] - 2026-11-02
+
+### Added
+- **Minimap button.** A piggy on the edge of your minimap: click to open the piggy, drag to move it. It's on by default, and you can hide it with **Show the minimap button** in Settings.
+- A login message so you know how to find the piggy: use `/piggy` or click the gold in your bags. OINK!
+
+### Changed
+- **Starting a new piggy is clearer.** After you smash the piggy, every message now says exactly what to do: open `/piggy` and click **Start a New Piggy**. It's free, no gold needed.
+- "Broken" piggies are now called **smashed** everywhere, to match the SMASH! button.
+- Tooltips, the floating piggy and the Stats tab now tell you how to start a new piggy instead of just saying it's broken.
+- Updated for Retail 12.1.7 and WoW Forever 1.60.1.
+
 ## [1.2.0] - 2026-10-31
 
 ### Added

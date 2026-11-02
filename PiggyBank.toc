@@ -1,4 +1,4 @@
-## Interface: 120105
+## Interface: 120107, 120105
 ## Title: Piggy Bank
 ## Notes: Squirrels away a % of the gold you earn. Smash the piggy to get it back.
 ## Author: Kota150

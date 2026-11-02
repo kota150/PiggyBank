@@ -21,14 +21,14 @@ Works with **Classic Era** (Vanilla, Hardcore, Season of Discovery), **WoW Forev
 - **Get scolded.** Spend your savings and the piggy pops up with one of 26 painfully cheesy puns.
   > *"Hogger is disappointed in you. And Hogger eats people."*
 - **Stats.** Lifetime saved, biggest deposit, goals completed, piggies smashed, times caught raiding the piggy, and more.
-- **No typing required.** Every setting is in the window. Slash commands are there if you want them.
+- **No typing required.** A minimap button opens the window, and every setting is in there. Slash commands are there if you want them.
 
 ![Getting scolded](https://raw.githubusercontent.com/kota150/PiggyBank/main/screenshots/scold.png)
 ![Vendor warning](https://raw.githubusercontent.com/kota150/PiggyBank/main/screenshots/vendor-warning.png)
 
 ## Usage
 
-Type `/piggy`, click your bag gold counter, or find **Piggy Bank** in **Esc → Options → AddOns**.
+Type `/piggy`, click the piggy on your minimap or your bag gold counter, or find **Piggy Bank** in **Esc → Options → AddOns**.
 
 | Command | What it does |
 | --- | --- |
