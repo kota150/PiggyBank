@@ -39,14 +39,17 @@ Type `/piggy`, click the piggy on your minimap or your bag gold counter, or find
 | `/piggy rate 25` | Save 25% of income (0–90) |
 | `/piggy goal 500 New Mount` | Add a goal of 500 gold |
 | `/piggy feed 10` | Put 10 gold in by hand |
+| `/piggy keep 5` | Always keep 5 gold spendable (`0` turns it off) |
 | `/piggy widget` | Show or hide the floating piggy |
 
 ## Good to know
 
 Addons can't lock gold, so the piggy is a ledger: the game will still let you spend your savings. You'll just hear about it.
 
-Savings are stored per character.
+Savings are stored per character, and the Stats tab shows your total across all characters.
 
-## Feedback
+## Feedback and translations
 
-Found a bug or have an idea? Open an issue on [GitHub](https://github.com/kota150/PiggyBank/issues).
+Found a bug or have an idea? Open an issue on [GitHub](https://github.com/kota150/PiggyBank/issues). The bug form asks for your game version and any Lua error.
+
+Want Piggy Bank in your language? See [TRANSLATING.md](https://github.com/kota150/PiggyBank/blob/main/TRANSLATING.md). Partial translations are welcome.
