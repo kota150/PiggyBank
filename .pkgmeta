@@ -12,3 +12,6 @@ ignore:
   - CURSEFORGE.md
   - .github
   - .gitattributes
+  - tools
+  - TRANSLATING.md
+  - Locales/_template.lua

@@ -2,6 +2,23 @@
 
 All notable changes to Piggy Bank are listed here.
 
+## [1.4.0] - 2026-11-04
+
+### Added
+- **Choose what counts as income.** Looted gold, quest rewards, vendor sales, mailbox gold (auction sales) and everything else each have their own switch in Settings.
+- **Always keep some spendable.** Set an amount (like repair money) and the piggy won't save while your spendable gold is below it. Also `/piggy keep 5`.
+- **Cash out goals.** When a goal is reached, a **Cash Out** button on the Goals tab releases exactly that amount without smashing the piggy.
+- **Savings history.** The Stats tab has a 7-day chart and a "Saved this week" total.
+- **All characters.** The Stats tab and tooltips show your combined savings across every character. Hover the row for a per-character list.
+- **Info bar support** for Titan Panel, ElvUI DataTexts, Bazooka, ChocolateBar and other LibDataBroker displays.
+- **Translation support.** All text can now be translated. See TRANSLATING.md.
+- A setting to turn off the login message.
+- Bug report and feature request forms on GitHub.
+
+### Changed
+- The Settings tab now scrolls, to fit the new options.
+- "Count mailbox gold as income" is now one of the income switches. Your old choice carries over.
+
 ## [1.3.0] - 2026-11-02
 
 ### Added

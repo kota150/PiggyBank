@@ -3,9 +3,14 @@
 -- of your gold is "savings", hides that part from the bag money display, and nags you
 -- if you spend into it. Smashing the piggy releases the savings back to "spendable".
 
+local _, ns = ...
+local L = ns.L
+
 local MAX_RATE = 90
 local MAX_GOALS = 5
 local WHACKS_NEEDED = 3
+local HISTORY_DAYS = 35
+local DAY = 86400
 local PIG_ICON = "Interface\\Icons\\Ability_Hunter_Pet_Boar"
 local COPPER_PER_GOLD = 10000
 local COIN_ICONS = {
@@ -21,16 +26,21 @@ local DEFAULTS = {
     savings = 0,        -- copper currently in the piggy
     lifetime = 0,       -- copper ever saved
     broken = false,     -- smashed piggies don't save until you start a new one
+    keepSpendable = 0,  -- copper; don't save while spendable gold is below this
     hideReal = true,    -- replace the bag money display with spendable gold
-    countMail = true,   -- count mailbox gold (auction sales etc.) as income
     scoldPopup = true,  -- pop the piggy up when you spend your savings
     vendorWarn = true,  -- flag vendor/trainer prices that would eat into savings
+    loginMessage = true,
     sound = true,
+    income = {          -- which kinds of gold gains count as income
+        loot = true, quest = true, vendor = true, mail = true, other = true,
+    },
     goals = {},         -- { name = "Mount", target = copper, reached = bool, everReached = bool }
+    history = {},       -- ["2026-11-04"] = copper saved that day
     widget = { shown = false, locked = false, point = nil }, -- off by default; pops up to scold you anyway
     minimap = { shown = true, angle = 225 },                 -- degrees around the minimap edge
     stats = {
-        piggySince = nil,   -- time() the current piggy was bought
+        piggySince = nil,   -- time() the current piggy was started
         incomeSeen = 0,     -- income the piggy took a cut of
         biggestDeposit = 0,
         smashes = 0,
@@ -38,53 +48,14 @@ local DEFAULTS = {
         raids = 0,          -- times you spent into your savings
         raided = 0,
         goalsCompleted = 0,
+        goalsCashedOut = 0,
+        cashedOut = 0,
     },
 }
 
--- One of these pops up (at random) when you spend into your savings. Cheese is mandatory.
-local SCOLDS = {
-    "Gold doesn't grow on Peacebloom, you know!",
-    "You just rolled Need on your own savings. NINJA LOOTER!",
-    "Your savings took more damage than a tank with no healer.",
-    "Hogger is disappointed in you. And Hogger eats people.",
-    "You are not prepared... for retirement!",
-    "That gold was soulbound to the piggy! BoP = Bacon on Purpose!",
-    "Pork chop? More like WALLET CHOP.",
-    "Stop! HAM time. Put. It. Back.",
-    "Your spending just pulled aggro from the whole bank.",
-    "Bacon me crazy, you spent the savings!",
-    "Swine and dine all you want, but not with MY gold.",
-    "Even a murloc saves better. Mrglglgl... *disappointed gurgle*",
-    "Zug zug? More like ZUG ZUG WHERE'D THE GOLD GO.",
-    "Achievement unlocked: Broke-en Hero.",
-    "Your piggy has been Sapped. Emotionally.",
-    "That's not a cooldown, that's a MELTDOWN.",
-    "Wipe on the budget raid! Everybody run back.",
-    "Lok'tar ogar? More like Lok'tar BROKE-gar.",
-    "Do you even know what 'savings' means, or are you just here for the loot?",
-    "You've been hit by Mortal Strike: savings healing reduced by 100%.",
-    "Oink oink means NO NO.",
-    "Your financial advisor is a pig and even HE is judging you.",
-    "This is why we can't have nice mounts.",
-    "Hamstring! You've crippled your savings!",
-    "The Lich King hoards better than you. And he's FROZEN.",
-    "Ham-ateur move, champion. Ham-ateur move.",
-}
-
--- Pops up before an auction house purchase that would dip into savings.
-local HEADS_UPS = {
-    "Whoa there, big spender! This purchase raids the piggy.",
-    "Incoming savings damage! Interrupt now?",
-    "The piggy is watching. And sweating.",
-    "Hold your horses! Unless you're buying a horse. Then REALLY hold them.",
-    "This one's coming out of the piggy. Are you sure, champion?",
-    "Pull! Wait, no, don't pull. This dips into your savings.",
-    "Squeal of disapproval incoming in 3... 2...",
-}
-
-local db
+local db, account, charKey
 local lastMoney
-local busy = {}         -- open UIs whose money changes aren't income (bank, trade...)
+local windows = {}      -- open UIs: key -> true, or a GetTime() grace period after closing
 local overlays = {}     -- bag money frame -> our replacement display
 local ui = {}
 local whacks, whackToken = 0, 0
@@ -101,7 +72,7 @@ local function Money(copper)
 end
 
 local function Print(msg)
-    DEFAULT_CHAT_FRAME:AddMessage("|cffff88ccPiggy Bank:|r " .. msg)
+    DEFAULT_CHAT_FRAME:AddMessage("|cffff88cc" .. L["Piggy Bank"] .. ":|r " .. msg)
 end
 
 local function Sound(name)
@@ -112,7 +83,7 @@ end
 
 local function GoldToCopper(text)
     local gold = tonumber(text)
-    if not gold or gold <= 0 then return nil end
+    if not gold or gold < 0 then return nil end
     return math.floor(gold * COPPER_PER_GOLD)
 end
 
@@ -135,12 +106,76 @@ local function ApplyDefaults(target, defaults)
     end
 end
 
-local function IsBusy()
-    local now = GetTime()
-    for _, until_ in pairs(busy) do
-        if until_ == true or until_ > now then return true end
+local function IsOpen(key)
+    local v = windows[key]
+    return v == true or (v and v > GetTime())
+end
+
+-- What kind of gold gain just happened, or nil if it isn't income at all
+-- (moving gold out of a bank or getting it in a trade is shuffling, not earning).
+local function IncomeSource()
+    for _, key in ipairs({ "Banker", "GuildBanker", "AccountBanker", "TradePartner" }) do
+        if IsOpen(key) then return nil end
     end
-    return false
+    for _, source in ipairs({ "mail", "vendor", "quest", "loot" }) do
+        if IsOpen(source) then return source end
+    end
+    return "other"
+end
+
+---------------------------------------------------------------------------
+-- Savings history and account-wide totals
+---------------------------------------------------------------------------
+
+local function DayKey(t)
+    return date("%Y-%m-%d", t or time())
+end
+
+local function SavedOnDay(daysAgo)
+    return db.history[DayKey(time() - daysAgo * DAY)] or 0
+end
+
+local function SavedThisWeek()
+    local total = 0
+    for i = 0, 6 do total = total + SavedOnDay(i) end
+    return total
+end
+
+local function PruneHistory()
+    local cutoff = DayKey(time() - HISTORY_DAYS * DAY)
+    for key in pairs(db.history) do
+        if key < cutoff then db.history[key] = nil end
+    end
+end
+
+local function UpdateAccount()
+    if not account then return end
+    local c = account.chars[charKey] or {}
+    account.chars[charKey] = c
+    c.savings = db.savings
+    c.class = select(2, UnitClass("player"))
+    c.updated = time()
+end
+
+local function AccountTotal()
+    local total, count = 0, 0
+    for _, c in pairs(account.chars) do
+        total = total + (c.savings or 0)
+        count = count + 1
+    end
+    return total, count
+end
+
+local function AddAccountLines(tooltip)
+    local list = {}
+    for name, c in pairs(account.chars) do table.insert(list, { name = name, c = c }) end
+    table.sort(list, function(a, b) return (a.c.savings or 0) > (b.c.savings or 0) end)
+    for _, entry in ipairs(list) do
+        local color = RAID_CLASS_COLORS and entry.c.class and RAID_CLASS_COLORS[entry.c.class]
+        local r, g, b = 1, 1, 1
+        if color then r, g, b = color.r, color.g, color.b end
+        tooltip:AddDoubleLine(entry.name, Money(entry.c.savings), r, g, b, 1, 1, 1)
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -163,7 +198,7 @@ local function CheckGoals()
                 goal.everReached = true
                 db.stats.goalsCompleted = db.stats.goalsCompleted + 1
             end
-            Celebrate("Goal reached: |cffffd100" .. goal.name .. "|r (" .. Money(goal.target) .. ")!")
+            Celebrate(L["Goal reached: |cffffd100%s|r (%s)! Cash it out on the Goals tab."]:format(goal.name, Money(goal.target)))
         elseif goal.reached and db.savings < goal.target then
             goal.reached = false
         end
@@ -174,6 +209,8 @@ local function AddToPiggy(copper)
     db.savings = db.savings + copper
     db.lifetime = db.lifetime + copper
     db.stats.biggestDeposit = math.max(db.stats.biggestDeposit, copper)
+    local today = DayKey()
+    db.history[today] = (db.history[today] or 0) + copper
     CheckGoals()
 end
 
@@ -207,8 +244,9 @@ end
 
 local function Scold(remaining)
     local msg
-    msg, lastScold = PickRandom(SCOLDS, lastScold)
-    Print("|cffff5555" .. msg .. "|r The piggy only holds " .. Money(remaining) .. " now.")
+    msg, lastScold = PickRandom(ns.SCOLDS, lastScold)
+    msg = L[msg]
+    Print("|cffff5555" .. msg .. "|r " .. L["The piggy only holds %s now."]:format(Money(remaining)))
     Sound("IG_QUEST_FAILED")
     PopBubble(msg, 1, 0.3, 0.3)
 end
@@ -216,8 +254,9 @@ end
 -- A heads-up *before* you spend (auction house purchases).
 local function HeadsUp(price)
     local msg
-    msg, lastHeadsUp = PickRandom(HEADS_UPS, lastHeadsUp)
-    Print("|cffffa500" .. msg .. "|r That's " .. Money(price) .. ", and you only have " .. Money(Spendable()) .. " spendable.")
+    msg, lastHeadsUp = PickRandom(ns.HEADS_UPS, lastHeadsUp)
+    msg = L[msg]
+    Print("|cffffa500" .. msg .. "|r " .. L["That's %s, and you only have %s spendable."]:format(Money(price), Money(Spendable())))
     Sound("RAID_WARNING")
     PopBubble(msg, 1, 0.65, 0)
 end
@@ -231,8 +270,12 @@ local function OnMoneyChanged()
     local delta = now - lastMoney
     lastMoney = now
 
-    if delta > 0 and not db.broken and db.rate > 0 and not IsBusy() then
+    local source = delta > 0 and IncomeSource()
+    if source and db.income[source] and not db.broken and db.rate > 0 then
         local cut = math.floor(delta * db.rate / 100)
+        -- Never save the gold you said you always want to keep spendable
+        local room = now - db.savings - db.keepSpendable
+        cut = math.min(cut, math.max(0, room))
         if cut > 0 then
             db.stats.incomeSeen = db.stats.incomeSeen + delta
             AddToPiggy(cut)
@@ -257,9 +300,9 @@ local function BreakPiggy()
     db.stats.smashedOut = db.stats.smashedOut + released
     for _, goal in ipairs(db.goals) do goal.reached = false end
     Sound("LOOT_WINDOW_COIN_SOUND")
-    Print("|cffffd100*CRASH!*|r " .. Money(released) .. " spills across the floor. It's all spendable again.")
-    Print("Lifetime saved: " .. Money(db.lifetime) .. ".")
-    Print("Want to keep saving? Open /piggy and click |cffffd100Start a New Piggy|r. No gold needed, it's free!")
+    Print(L["|cffffd100*CRASH!*|r %s spills across the floor. It's all spendable again."]:format(Money(released)))
+    Print(L["Lifetime saved: %s."]:format(Money(db.lifetime)))
+    Print(L["Want to keep saving? Open /piggy and click |cffffd100Start a New Piggy|r. No gold needed, it's free!"])
     Refresh()
 end
 
@@ -267,16 +310,16 @@ local function NewPiggy()
     db.broken = false
     db.stats.piggySince = time()
     Sound("IG_CHARACTER_INFO_OPEN")
-    Print("A shiny new piggy! Saving " .. db.rate .. "% of everything you earn.")
+    Print(L["A shiny new piggy! Saving %d%% of everything you earn."]:format(db.rate))
     Refresh()
 end
 
 local function FeedPiggy(copper)
-    if db.broken then Print("The piggy is smashed. Open /piggy and click |cffffd100Start a New Piggy|r first. It's free!") return false end
-    if copper > Spendable() then Print("You don't have that much spendable gold.") return false end
+    if db.broken then Print(L["The piggy is smashed. Open /piggy and click |cffffd100Start a New Piggy|r first. It's free!"]) return false end
+    if copper > Spendable() then Print(L["You don't have that much spendable gold."]) return false end
     AddToPiggy(copper)
     Sound("LOOT_WINDOW_COIN_SOUND")
-    Print("Fed the piggy " .. Money(copper) .. ". Oink.")
+    Print(L["Fed the piggy %s. Oink."]:format(Money(copper)))
     Refresh()
     return true
 end
@@ -286,27 +329,66 @@ local function SetRate(rate)
     Refresh()
 end
 
+local function SetKeepSpendable(copper)
+    db.keepSpendable = math.max(0, copper)
+    if db.keepSpendable > 0 then
+        Print(L["The piggy will always leave you at least %s spendable."]:format(Money(db.keepSpendable)))
+    else
+        Print(L["Keep-spendable amount turned off."])
+    end
+    Refresh()
+end
+
 local function AddGoal(name, copper)
-    if #db.goals >= MAX_GOALS then Print("You can have up to " .. MAX_GOALS .. " goals.") return false end
+    if #db.goals >= MAX_GOALS then Print(L["You can have up to %d goals."]:format(MAX_GOALS)) return false end
     name = (name and name:match("^%s*(.-)%s*$")) or ""
-    if name == "" then name = "Goal " .. (#db.goals + 1) end
+    if name == "" then name = L["Goal %d"]:format(#db.goals + 1) end
     table.insert(db.goals, { name = name, target = copper, reached = db.savings >= copper, everReached = db.savings >= copper })
-    Print("New goal: |cffffd100" .. name .. "|r - " .. Money(copper))
+    Print(L["New goal: |cffffd100%s|r - %s"]:format(name, Money(copper)))
     Refresh()
     return true
 end
 
 local function RemoveGoal(index)
     local goal = table.remove(db.goals, index)
-    if goal then Print("Removed goal: " .. goal.name) end
+    if goal then Print(L["Removed goal: %s"]:format(goal.name)) end
     Refresh()
 end
 
+-- Spend a reached goal: release exactly its amount without smashing the whole piggy.
+local function CashOutGoal(goal)
+    for i, g in ipairs(db.goals) do
+        if g == goal then
+            local amount = math.min(goal.target, db.savings)
+            db.savings = db.savings - amount
+            db.stats.goalsCashedOut = db.stats.goalsCashedOut + 1
+            db.stats.cashedOut = db.stats.cashedOut + amount
+            table.remove(db.goals, i)
+            CheckGoals()
+            Sound("LOOT_WINDOW_COIN_SOUND")
+            Print(L["Cashed out %s for |cffffd100%s|r. It's spendable now. Go treat yourself!"]:format(Money(amount), goal.name))
+            Refresh()
+            return
+        end
+    end
+end
+
 StaticPopupDialogs["PIGGYBANK_BREAK"] = {
-    text = "Smash the piggy bank?\n\n%s will become spendable again, and the piggy stops saving.\n\nYou can start a new piggy any time with one click. It doesn't cost anything.",
-    button1 = "SMASH!",
+    text = L["Smash the piggy bank?\n\n%s will become spendable again, and the piggy stops saving.\n\nYou can start a new piggy any time with one click. It doesn't cost anything."],
+    button1 = L["SMASH!"],
     button2 = CANCEL,
     OnAccept = function() BreakPiggy() end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+
+StaticPopupDialogs["PIGGYBANK_CASHOUT"] = {
+    text = L["Cash out %s for \"%s\"?\n\nThat amount leaves the piggy and becomes spendable, and the goal is done. The rest of your savings stay in the piggy."],
+    button1 = L["Cash Out"],
+    button2 = CANCEL,
+    OnAccept = function(_, goal) CashOutGoal(goal) end,
     timeout = 0,
     whileDead = true,
     hideOnEscape = true,
@@ -334,22 +416,30 @@ end
 -- Tooltip
 ---------------------------------------------------------------------------
 
-local function ShowTooltip(owner)
-    GameTooltip:SetOwner(owner, "ANCHOR_TOPLEFT")
-    GameTooltip:AddLine("Piggy Bank" .. (db.broken and " |cffff5555(smashed)|r" or ""))
-    GameTooltip:AddDoubleLine("Spendable", Money(Spendable()), 1, 1, 1, 1, 1, 1)
-    GameTooltip:AddDoubleLine("In the piggy", Money(db.savings), 1, 0.53, 0.8, 1, 1, 1)
+local function FillTooltip(tooltip)
+    tooltip:AddLine(L["Piggy Bank"] .. (db.broken and (" |cffff5555(" .. L["smashed"] .. ")|r") or ""))
+    tooltip:AddDoubleLine(L["Spendable"], Money(Spendable()), 1, 1, 1, 1, 1, 1)
+    tooltip:AddDoubleLine(L["In the piggy"], Money(db.savings), 1, 0.53, 0.8, 1, 1, 1)
     if db.broken then
-        GameTooltip:AddLine("Not saving. Open the piggy and click Start a New Piggy (free).", 1, 0.82, 0, true)
+        tooltip:AddLine(L["Not saving. Open the piggy and click Start a New Piggy (free)."], 1, 0.82, 0, true)
     else
-        GameTooltip:AddDoubleLine("Saving", db.rate .. "% of income", 0.7, 0.7, 0.7, 0.7, 0.7, 0.7)
+        tooltip:AddDoubleLine(L["Saving"], L["%d%% of income"]:format(db.rate), 0.7, 0.7, 0.7, 0.7, 0.7, 0.7)
+    end
+    local total, count = AccountTotal()
+    if count > 1 then
+        tooltip:AddDoubleLine(L["All characters"], Money(total), 0.7, 0.7, 0.7, 0.7, 0.7, 0.7)
     end
     for _, goal in ipairs(db.goals) do
         local pct = math.min(100, math.floor(db.savings / goal.target * 100))
         local r, g = goal.reached and 0.2 or 1, goal.reached and 1 or 0.82
-        GameTooltip:AddDoubleLine(goal.name, pct .. "%", r, g, 0, r, g, 0)
+        tooltip:AddDoubleLine(goal.name, pct .. "%", r, g, 0, r, g, 0)
     end
-    GameTooltip:AddLine("Click to open the piggy.", 0.5, 0.5, 0.5)
+    tooltip:AddLine(L["Click to open the piggy."], 0.5, 0.5, 0.5)
+end
+
+local function ShowTooltip(owner)
+    GameTooltip:SetOwner(owner, "ANCHOR_TOPLEFT")
+    FillTooltip(GameTooltip)
     GameTooltip:Show()
 end
 
@@ -530,8 +620,8 @@ local function RefreshWidget()
     local f = ui.widget
     f:SetShown(db.widget.shown or f.scolding)
     f.icon:SetDesaturated(db.broken)
-    f.savings:SetText(db.broken and "|cffff5555Smashed!|r Click for a new one" or Money(db.savings))
-    f.spendable:SetText("Spendable: " .. Money(Spendable()))
+    f.savings:SetText(db.broken and ("|cffff5555" .. L["Smashed!"] .. "|r " .. L["Click for a new one"]) or Money(db.savings))
+    f.spendable:SetText(L["Spendable: %s"]:format(Money(Spendable())))
     f:SetWidth(math.max(140, 50 + math.max(f.savings:GetStringWidth(), f.spendable:GetStringWidth())))
 end
 
@@ -591,6 +681,29 @@ local function RefreshMinimapButton()
     local b = ui.minimapButton
     b:SetShown(db.minimap.shown)
     b.icon:SetDesaturated(db.broken)
+end
+
+---------------------------------------------------------------------------
+-- Data broker (Titan Panel, ElvUI DataTexts, Bazooka, ChocolateBar...)
+---------------------------------------------------------------------------
+
+-- Only used when another addon has loaded LibDataBroker; we don't ship it ourselves.
+local function SetupDataBroker()
+    local LDB = LibStub and LibStub("LibDataBroker-1.1", true)
+    if not LDB then return end
+    ui.broker = LDB:NewDataObject("Piggy Bank", {
+        type = "data source",
+        label = L["Piggy Bank"],
+        icon = PIG_ICON,
+        text = "",
+        OnClick = function() ui.ToggleWindow() end,
+        OnTooltipShow = function(tooltip) FillTooltip(tooltip) end,
+    })
+end
+
+local function RefreshDataBroker()
+    if not ui.broker then return end
+    ui.broker.text = db.broken and ("|cffff5555" .. L["Smashed!"] .. "|r") or Money(db.savings)
 end
 
 ---------------------------------------------------------------------------
@@ -738,23 +851,41 @@ local function Slider(parent, width, minV, maxV, onChange)
     return s
 end
 
+-- Classic clients don't have every modern template, so use the first one that exists.
+local function HasTemplate(template)
+    if not (C_XMLUtil and C_XMLUtil.GetTemplateInfo) then return true end
+    return C_XMLUtil.GetTemplateInfo(template) ~= nil
+end
+
+local function CreateFromFirst(frameType, name, parent, templates)
+    for _, template in ipairs(templates) do
+        if HasTemplate(template) then
+            local ok, frame = pcall(CreateFrame, frameType, name, parent, template)
+            if ok and frame then return frame, template end
+        end
+    end
+    return CreateFrame(frameType, name, parent), nil
+end
+
 ---------------------------------------------------------------------------
 -- Main window (tabs: Piggy / Goals / Stats / Settings)
 ---------------------------------------------------------------------------
 
-local TAB_NAMES = { "Piggy", "Goals", "Stats", "Settings" }
+local TAB_NAMES = { L["Piggy"], L["Goals"], L["Stats"], L["Settings"] }
 
 local function BuildPiggyPage(f, page)
-    Header(page, "In the Piggy", 0)
+    Header(page, L["In the Piggy"], 0)
     f.savingsCoins = CoinDisplay(page, "GameFontHighlightLarge", 18)
     f.savingsCoins:SetPoint("TOPLEFT", 12, -24)
     f.status = Label(page, "GameFontHighlightSmall", "TOPLEFT", 12, -50)
+    f.status:SetWidth(330)
+    f.status:SetJustifyH("LEFT")
 
-    Label(page, "GameFontNormal", "TOPLEFT", 12, -74):SetText("Spendable:")
+    Label(page, "GameFontNormal", "TOPLEFT", 12, -74):SetText(L["Spendable:"])
     f.spendableCoins = CoinDisplay(page, "GameFontHighlight", 13)
     f.spendableCoins:SetPoint("TOPLEFT", 100, -74)
 
-    local _, rateLine = Header(page, "Savings Rate", -106)
+    local _, rateLine = Header(page, L["Savings Rate"], -106)
     f.rateText = Label(page, "GameFontHighlightLarge", "TOPRIGHT", -8, -103)
     rateLine:SetPoint("RIGHT", f.rateText, "LEFT", -8, 0)
     local minus = Button(page, "-", 24, function() SetRate(db.rate - (IsShiftKeyDown() and 5 or 1)) end)
@@ -765,9 +896,9 @@ local function BuildPiggyPage(f, page)
     plus:SetPoint("LEFT", f.rateSlider, "RIGHT", 18, 0)
     Label(page, "GameFontDisableSmall", "TOPLEFT", f.rateSlider, "BOTTOMLEFT", 0, -2):SetText("0%")
     Label(page, "GameFontDisableSmall", "TOPRIGHT", f.rateSlider, "BOTTOMRIGHT", 0, -2):SetText(MAX_RATE .. "%")
-    Label(page, "GameFontHighlightSmall", "TOP", f.rateSlider, "BOTTOM", 0, -2):SetText("of everything you earn")
+    Label(page, "GameFontHighlightSmall", "TOP", f.rateSlider, "BOTTOM", 0, -2):SetText(L["of everything you earn"])
 
-    Header(page, "Feed the Piggy", -196)
+    Header(page, L["Feed the Piggy"], -196)
     f.feedInput = CoinInput(page)
     f.feedInput:SetPoint("TOPLEFT", 10, -220)
     local function SubmitFeed()
@@ -776,22 +907,21 @@ local function BuildPiggyPage(f, page)
         if FeedPiggy(copper) then f.feedInput:Clear() end
     end
     f.feedInput:OnEnter(SubmitFeed)
-    Button(page, "Feed", 80, SubmitFeed):SetPoint("LEFT", f.feedInput, "RIGHT", 10, 0)
-    Label(page, "GameFontDisableSmall", "TOPLEFT", 12, -248):SetText("Drop in spendable gold by hand. No take-backs!")
+    Button(page, L["Feed"], 80, SubmitFeed):SetPoint("LEFT", f.feedInput, "RIGHT", 10, 0)
+    Label(page, "GameFontDisableSmall", "TOPLEFT", 12, -248):SetText(L["Drop in spendable gold by hand. No take-backs!"])
 
-    Header(page, "Break the Piggy", -280)
+    Header(page, L["Break the Piggy"], -280)
     local breakHelp = Label(page, "GameFontHighlightSmall", "TOPLEFT", 12, -302)
     breakHelp:SetWidth(330)
     breakHelp:SetJustifyH("LEFT")
-    breakHelp:SetText("Need your gold back? Whack the piggy " .. WHACKS_NEEDED ..
-        " times to smash it open. It won't save again until you start a new one (free).")
+    breakHelp:SetText(L["Need your gold back? Whack the piggy %d times to smash it open. It won't save again until you start a new one (free)."]:format(WHACKS_NEEDED))
     f.breakBtn = Button(page, "", 220, Whack)
     f.breakBtn:SetHeight(26)
     f.breakBtn:SetPoint("TOP", page, "TOP", 0, -334)
 end
 
 local function BuildGoalsPage(f, page)
-    local _, goalsLine = Header(page, "Savings Goals", 0)
+    local _, goalsLine = Header(page, L["Savings Goals"], 0)
     f.goalCount = Label(page, "GameFontHighlightSmall", "TOPRIGHT", -8, -2)
     goalsLine:SetPoint("RIGHT", f.goalCount, "LEFT", -8, 0)
     f.rows = {}
@@ -818,22 +948,29 @@ local function BuildGoalsPage(f, page)
         remove:SetSize(24, 24)
         remove:SetPoint("LEFT", row.bar, "RIGHT", 0, 0)
         remove:SetScript("OnClick", function() RemoveGoal(i) end)
+        -- Shown in place of the amount once a goal is reached
+        row.cashOut = Button(row, L["Cash Out"], 90, function()
+            local goal = db.goals[i]
+            if goal then StaticPopup_Show("PIGGYBANK_CASHOUT", Money(goal.target), goal.name, goal) end
+        end)
+        row.cashOut:SetHeight(18)
+        row.cashOut:SetPoint("TOPRIGHT", -26, 3)
         f.rows[i] = row
     end
     f.noGoals = Label(page, "GameFontDisable", "TOPLEFT", 12, -30)
-    f.noGoals:SetText("No goals yet. What are you saving up for?")
+    f.noGoals:SetText(L["No goals yet. What are you saving up for?"])
 
-    Header(page, "New Goal", -222)
-    Label(page, "GameFontHighlight", "TOPLEFT", 12, -250):SetText("Name")
+    Header(page, L["New Goal"], -222)
+    Label(page, "GameFontHighlight", "TOPLEFT", 12, -250):SetText(L["Name"])
     f.goalName = EditBox(page, 220)
     f.goalName:SetPoint("TOPLEFT", 80, -246)
     f.goalName:SetMaxLetters(40)
-    Label(page, "GameFontHighlight", "TOPLEFT", 12, -280):SetText("Amount")
+    Label(page, "GameFontHighlight", "TOPLEFT", 12, -280):SetText(L["Amount"])
     f.goalInput = CoinInput(page)
     f.goalInput:SetPoint("TOPLEFT", 74, -276)
     local function SubmitGoal()
         local copper = f.goalInput:GetCopper()
-        if copper <= 0 then Print("Enter how much the goal costs.") return end
+        if copper <= 0 then Print(L["Enter how much the goal costs."]) return end
         if AddGoal(f.goalName:GetText(), copper) then
             f.goalName:SetText("")
             f.goalName:ClearFocus()
@@ -843,22 +980,29 @@ local function BuildGoalsPage(f, page)
     f.goalInput:OnEnter(SubmitGoal)
     f.goalName:SetScript("OnEnterPressed", function() f.goalInput.boxes[1]:SetFocus() end)
     f.goalName:SetScript("OnTabPressed", function() f.goalInput.boxes[1]:SetFocus() end)
-    f.addGoalBtn = Button(page, "Add Goal", 120, SubmitGoal)
+    f.addGoalBtn = Button(page, L["Add Goal"], 120, SubmitGoal)
     f.addGoalBtn:SetPoint("TOPLEFT", 80, -310)
+    Label(page, "GameFontDisableSmall", "TOPLEFT", 12, -344):SetText(L["Reached a goal? Click Cash Out to spend just that amount."])
 end
 
+-- { label, value function, optional tooltip function }
 local STAT_ROWS = {
-    { "Current savings rate",       function() return db.broken and "|cffff5555smashed (start a new one)|r" or (db.rate .. "%") end },
-    { "Current piggy's age",        function()
+    { "Current savings rate", function()
+        return db.broken and ("|cffff5555" .. L["smashed (start a new one)"] .. "|r") or (db.rate .. "%")
+    end },
+    { "Current piggy's age", function()
         local since = db.stats.piggySince
         if db.broken or not since then return "-" end
         local age = time() - since
-        return age < 60 and "brand new" or SecondsToTime(age)
+        return age < 60 and L["brand new"] or SecondsToTime(age)
     end },
+    { "Saved this week",            function() return Money(SavedThisWeek()) end },
     { "Lifetime saved",             function() return Money(db.lifetime) end },
     { "Income tracked",             function() return Money(db.stats.incomeSeen) end },
     { "Biggest single deposit",     function() return Money(db.stats.biggestDeposit) end },
+    { "All characters",             function() return Money((AccountTotal())) end, AddAccountLines },
     { "Goals completed",            function() return db.stats.goalsCompleted end },
+    { "Goals cashed out",           function() return db.stats.goalsCashedOut end },
     { "Piggies smashed",            function() return db.stats.smashes end },
     { "Gold released by smashing",  function() return Money(db.stats.smashedOut) end },
     { "Times caught raiding piggy", function() return db.stats.raids end },
@@ -866,60 +1010,161 @@ local STAT_ROWS = {
 }
 
 local function BuildStatsPage(f, page)
-    Header(page, "Statistics", 0)
+    Header(page, L["Statistics"], 0)
     f.statValues = {}
     for i, stat in ipairs(STAT_ROWS) do
-        local y = -22 - (i - 1) * 24
-        local stripe = page:CreateTexture(nil, "BACKGROUND")
-        stripe:SetPoint("TOPLEFT", 4, y + 2)
-        stripe:SetPoint("RIGHT", page, "RIGHT", -4, 0)
-        stripe:SetHeight(22)
+        local y = -22 - (i - 1) * 22
+        local row = CreateFrame("Frame", nil, page)
+        row:SetPoint("TOPLEFT", 4, y + 2)
+        row:SetPoint("RIGHT", page, "RIGHT", -4, 0)
+        row:SetHeight(20)
+        local stripe = row:CreateTexture(nil, "BACKGROUND")
+        stripe:SetAllPoints()
         stripe:SetColorTexture(1, 1, 1, i % 2 == 0 and 0.04 or 0.08)
-        Label(page, "GameFontNormal", "TOPLEFT", 12, y - 2):SetText(stat[1])
-        f.statValues[i] = Label(page, "GameFontHighlight", "TOPRIGHT", -12, y - 2)
+        Label(row, "GameFontNormal", "LEFT", 8, 0):SetText(L[stat[1]])
+        f.statValues[i] = Label(row, "GameFontHighlight", "RIGHT", -8, 0)
+        if stat[3] then
+            row:EnableMouse(true)
+            row:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:AddLine(L[stat[1]])
+                stat[3](GameTooltip)
+                GameTooltip:Show()
+            end)
+            row:SetScript("OnLeave", HideTooltip)
+        end
+    end
+
+    -- Last 7 days bar chart
+    local top = -22 - #STAT_ROWS * 22 - 8
+    Header(page, L["Last 7 Days"], top)
+    local baseline = top - 72
+    f.chart = {}
+    local slot = 330 / 7
+    for i = 1, 7 do
+        local x = 14 + (i - 1) * slot
+        local bar = page:CreateTexture(nil, "ARTWORK")
+        bar:SetWidth(26)
+        bar:SetPoint("BOTTOMLEFT", page, "TOPLEFT", x + (slot - 26) / 2, baseline)
+        local day = Label(page, "GameFontDisableSmall", "TOP", bar, "BOTTOM", 0, -2)
+        local hover = CreateFrame("Frame", nil, page)
+        hover:SetSize(slot, 60)
+        hover:SetPoint("BOTTOMLEFT", page, "TOPLEFT", x, baseline - 14)
+        hover:EnableMouse(true)
+        hover:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:AddDoubleLine(self.dayName or "", Money(self.amount or 0), 1, 0.82, 0, 1, 1, 1)
+            GameTooltip:Show()
+        end)
+        hover:SetScript("OnLeave", HideTooltip)
+        f.chart[i] = { bar = bar, day = day, hover = hover }
     end
 end
 
 local function BuildSettingsPage(f, page)
-    Header(page, "Display", 0)
-    f.hideReal = CheckBox(page, "Show only spendable gold in my bags",
-        "Your bag gold counter shows what you can spend. The piggy's share is hidden.",
-        function(on) db.hideReal = on; Refresh() end, "TOPLEFT", 8, -20)
-    f.showMinimap = CheckBox(page, "Show the minimap button",
-        "A little piggy on the edge of your minimap. Click it to open this window, drag it to move it.",
-        function(on) db.minimap.shown = on; Refresh() end, "TOPLEFT", f.hideReal, "BOTTOMLEFT", 0, -2)
-    f.showWidget = CheckBox(page, "Always show the floating piggy",
-        "Keep the little piggy on screen. When off, it only pops up to scold you.",
-        function(on) db.widget.shown = on; Refresh() end, "TOPLEFT", f.showMinimap, "BOTTOMLEFT", 0, -2)
-    f.lockWidget = CheckBox(page, "Lock the floating piggy in place",
-        "Stops the floating piggy from being dragged around.",
-        function(on) db.widget.locked = on end, "TOPLEFT", f.showWidget, "BOTTOMLEFT", 0, -2)
-    Button(page, "Reset Piggy Position", 170, function()
+    -- The settings list is longer than the window, so it scrolls
+    local scroll, template = CreateFromFirst("ScrollFrame", "PiggyBankSettingsScroll", page,
+        { "UIPanelScrollFrameTemplate", "ScrollFrameTemplate" })
+    scroll:SetPoint("TOPLEFT", 0, 0)
+    scroll:SetPoint("BOTTOMRIGHT", -26, 0)
+    if not template then
+        scroll:EnableMouseWheel(true)
+        scroll:SetScript("OnMouseWheel", function(self, delta)
+            local max = self:GetVerticalScrollRange()
+            self:SetVerticalScroll(math.max(0, math.min(max, self:GetVerticalScroll() - delta * 30)))
+        end)
+    end
+    local child = CreateFrame("Frame", nil, scroll)
+    child:SetWidth(326)
+    scroll:SetScrollChild(child)
+
+    f.settingChecks = {}
+    local y = 0
+    local function Section(title)
+        Header(child, title, y)
+        y = y - 22
+    end
+    local function Check(label, tooltip, get, set)
+        local cb = CheckBox(child, label, tooltip, function(on) set(on); Refresh() end, "TOPLEFT", 8, y)
+        cb.get = get
+        table.insert(f.settingChecks, cb)
+        y = y - 26
+    end
+    local function Text(template, text)
+        local fs = Label(child, template, "TOPLEFT", 12, y)
+        fs:SetWidth(300)
+        fs:SetJustifyH("LEFT")
+        fs:SetText(text or "")
+        return fs
+    end
+
+    Section(L["Display"])
+    Check(L["Show only spendable gold in my bags"],
+        L["Your bag gold counter shows what you can spend. The piggy's share is hidden."],
+        function() return db.hideReal end, function(on) db.hideReal = on end)
+    Check(L["Show the minimap button"],
+        L["A little piggy on the edge of your minimap. Click it to open this window, drag it to move it."],
+        function() return db.minimap.shown end, function(on) db.minimap.shown = on end)
+    Check(L["Always show the floating piggy"],
+        L["Keep the little piggy on screen. When off, it only pops up to scold you."],
+        function() return db.widget.shown end, function(on) db.widget.shown = on end)
+    Check(L["Lock the floating piggy in place"],
+        L["Stops the floating piggy from being dragged around."],
+        function() return db.widget.locked end, function(on) db.widget.locked = on end)
+    Button(child, L["Reset Piggy Position"], 170, function()
         db.widget.point = nil
         PlaceWidget(ui.widget)
-        Print("The floating piggy is back in the middle of your screen.")
-    end):SetPoint("TOPLEFT", f.lockWidget, "BOTTOMLEFT", 4, -4)
+        Print(L["The floating piggy is back in the middle of your screen."])
+    end):SetPoint("TOPLEFT", 12, y - 2)
+    y = y - 34
 
-    Header(page, "Saving", -170)
-    f.countMail = CheckBox(page, "Count mailbox gold as income",
-        "Auction sales and gold mailed to you count as earnings. Turn off if you mail gold between your own characters.",
-        function(on) db.countMail = on end, "TOPLEFT", 8, -190)
+    Section(L["Saving"])
+    Text("GameFontHighlight", L["Always keep at least this much spendable:"])
+    y = y - 20
+    f.keepInput = CoinInput(child)
+    f.keepInput:SetPoint("TOPLEFT", 10, y)
+    local function SubmitKeep()
+        SetKeepSpendable(f.keepInput:GetCopper())
+        f.keepInput:Clear()
+    end
+    f.keepInput:OnEnter(SubmitKeep)
+    Button(child, L["Set"], 60, SubmitKeep):SetPoint("LEFT", f.keepInput, "RIGHT", 10, 0)
+    y = y - 26
+    f.keepText = Text("GameFontDisableSmall")
+    y = y - 30
 
-    Header(page, "Nagging", -232)
-    f.scoldPopup = CheckBox(page, "Scold me when I spend my savings",
-        "The piggy pops up with a speech bubble. Chat messages always happen.",
-        function(on) db.scoldPopup = on end, "TOPLEFT", 8, -252)
-    f.soundToggle = CheckBox(page, "Play sounds",
-        "Coin clinks, cheers and disappointed noises.",
-        function(on) db.sound = on end, "TOPLEFT", f.scoldPopup, "BOTTOMLEFT", 0, -2)
-    f.vendorWarn = CheckBox(page, "Warn me before I spend savings",
-        "Flags anything that costs more than your spendable gold at vendors, trainers, flight masters and the auction house.",
-        function(on) db.vendorWarn = on end, "TOPLEFT", f.soundToggle, "BOTTOMLEFT", 0, -2)
+    Text("GameFontHighlight", L["Count these as income:"])
+    y = y - 20
+    Check(L["Looted gold"], L["Gold from mobs, chests and containers."],
+        function() return db.income.loot end, function(on) db.income.loot = on end)
+    Check(L["Quest rewards"], L["Gold handed out when you turn in a quest."],
+        function() return db.income.quest end, function(on) db.income.quest = on end)
+    Check(L["Selling to vendors"], L["Gold from selling items to a merchant."],
+        function() return db.income.vendor end, function(on) db.income.vendor = on end)
+    Check(L["Mailbox gold (auction sales)"],
+        L["Auction sales and gold mailed to you. Turn off if you mail gold between your own characters."],
+        function() return db.income.mail end, function(on) db.income.mail = on end)
+    Check(L["Everything else"], L["Any other gold you gain, like world quests and other rewards."],
+        function() return db.income.other end, function(on) db.income.other = on end)
+    y = y - 6
 
-    local help = Label(page, "GameFontDisableSmall", "TOPLEFT", 12, -348)
-    help:SetWidth(330)
-    help:SetJustifyH("LEFT")
-    help:SetText("Prefer typing? /piggy opens this window.\nAlso: /piggy rate 25,  /piggy goal 500 Mount,\n/piggy feed 10,  /piggy widget")
+    Section(L["Nagging"])
+    Check(L["Scold me when I spend my savings"],
+        L["The piggy pops up with a speech bubble. Chat messages always happen."],
+        function() return db.scoldPopup end, function(on) db.scoldPopup = on end)
+    Check(L["Play sounds"], L["Coin clinks, cheers and disappointed noises."],
+        function() return db.sound end, function(on) db.sound = on end)
+    Check(L["Warn me before I spend savings"],
+        L["Flags anything that costs more than your spendable gold at vendors, trainers, flight masters and the auction house."],
+        function() return db.vendorWarn end, function(on) db.vendorWarn = on end)
+    Check(L["Show the login message"], L["A reminder in chat each time you log in."],
+        function() return db.loginMessage end, function(on) db.loginMessage = on end)
+    y = y - 8
+
+    local help = Text("GameFontDisableSmall",
+        L["Prefer typing? /piggy opens this window.\nAlso: /piggy rate 25,  /piggy goal 500 Mount,\n/piggy feed 10,  /piggy keep 5,  /piggy widget"])
+    y = y - help:GetStringHeight() - 16
+    child:SetHeight(-y)
 end
 
 -- Size tabs to fit their text. If they don't fit under the window (Classic's tab art has
@@ -954,22 +1199,6 @@ local function SelectTab(f, id)
     end
 end
 
--- Classic clients don't have every modern template, so use the first one that exists.
-local function HasTemplate(template)
-    if not (C_XMLUtil and C_XMLUtil.GetTemplateInfo) then return true end
-    return C_XMLUtil.GetTemplateInfo(template) ~= nil
-end
-
-local function CreateFromFirst(frameType, name, parent, templates)
-    for _, template in ipairs(templates) do
-        if HasTemplate(template) then
-            local ok, frame = pcall(CreateFrame, frameType, name, parent, template)
-            if ok and frame then return frame, template end
-        end
-    end
-    return CreateFrame(frameType, name, parent), nil
-end
-
 local function CreateMainFrame()
     local f, template = CreateFromFirst("Frame", "PiggyBankFrame", UIParent,
         { "ButtonFrameTemplate", "BasicFrameTemplateWithInset", "BackdropTemplate" })
@@ -990,7 +1219,7 @@ end
 
 local function CreateWindow()
     local f = CreateMainFrame()
-    f:SetSize(384, 500)
+    f:SetSize(384, 520)
     f:SetPoint("CENTER")
     f:SetMovable(true)
     f:EnableMouse(true)
@@ -1003,7 +1232,7 @@ local function CreateWindow()
     f:Hide()
     tinsert(UISpecialFrames, "PiggyBankFrame") -- close with Escape
 
-    if f.SetTitle then f:SetTitle("Piggy Bank") elseif f.TitleText then f.TitleText:SetText("Piggy Bank") end
+    if f.SetTitle then f:SetTitle(L["Piggy Bank"]) elseif f.TitleText then f.TitleText:SetText(L["Piggy Bank"]) end
     if f.SetPortraitToAsset then
         f:SetPortraitToAsset(PIG_ICON)
     else
@@ -1053,6 +1282,23 @@ local function CreateWindow()
     ui.window = f
 end
 
+local function RefreshChart(f)
+    local amounts, max = {}, 0
+    for i = 1, 7 do
+        amounts[i] = SavedOnDay(7 - i)
+        max = math.max(max, amounts[i])
+    end
+    for i, col in ipairs(f.chart) do
+        local daysAgo = 7 - i
+        local t = time() - daysAgo * DAY
+        col.bar:SetHeight(max > 0 and math.max(1, 56 * amounts[i] / max) or 1)
+        col.bar:SetColorTexture(1, 0.53, 0.8, daysAgo == 0 and 1 or 0.6)
+        col.day:SetText(date("%a", t))
+        col.hover.dayName = daysAgo == 0 and L["Today"] or date("%A", t)
+        col.hover.amount = amounts[i]
+    end
+end
+
 local function RefreshWindow()
     local f = ui.window
     if not f:IsShown() then return end
@@ -1061,20 +1307,20 @@ local function RefreshWindow()
     f.savingsCoins:SetAmount(db.savings)
     f.spendableCoins:SetAmount(Spendable())
     if db.broken then
-        f.status:SetText("|cffff5555Smashed!|r Click |cffffd100Start a New Piggy|r below to keep saving. It's free.")
+        f.status:SetText("|cffff5555" .. L["Smashed!"] .. "|r " .. L["Click |cffffd100Start a New Piggy|r below. It's free!"])
     else
-        f.status:SetText("Saving |cffffd100" .. db.rate .. "%|r of everything you earn.")
+        f.status:SetText(L["Saving |cffffd100%d%%|r of everything you earn."]:format(db.rate))
     end
     f.rateText:SetText(db.rate .. "%")
     f.rateSlider:SetValue(db.rate)
     if db.broken then
-        f.breakBtn:SetText("Start a New Piggy")
+        f.breakBtn:SetText(L["Start a New Piggy"])
     elseif whacks == 0 then
-        f.breakBtn:SetText("Break the Piggy Bank")
+        f.breakBtn:SetText(L["Break the Piggy Bank"])
     elseif whacks == WHACKS_NEEDED - 1 then
-        f.breakBtn:SetText("|cffff5555CRACK!|r One more whack!")
+        f.breakBtn:SetText("|cffff5555" .. L["CRACK!"] .. "|r " .. L["One more whack!"])
     else
-        f.breakBtn:SetText("Crack! (" .. (WHACKS_NEEDED - whacks) .. " more whacks)")
+        f.breakBtn:SetText(L["Crack! (%d more whacks)"]:format(WHACKS_NEEDED - whacks))
     end
 
     -- Goals tab
@@ -1085,8 +1331,10 @@ local function RefreshWindow()
             local progress = math.min(1, db.savings / goal.target)
             row.name:SetText(goal.name)
             row.amount:SetText(Money(math.min(db.savings, goal.target)) .. " / " .. Money(goal.target))
+            row.amount:SetShown(not goal.reached)
+            row.cashOut:SetShown(goal.reached)
             row.bar:SetValue(progress)
-            row.pct:SetText(goal.reached and "Complete!" or (math.floor(progress * 100) .. "%"))
+            row.pct:SetText(goal.reached and L["Complete!"] or (math.floor(progress * 100) .. "%"))
             if goal.reached then row.bar:SetStatusBarColor(0.1, 0.8, 0.1) else row.bar:SetStatusBarColor(1, 0.53, 0.8) end
         end
     end
@@ -1096,16 +1344,15 @@ local function RefreshWindow()
 
     -- Stats tab
     for i, stat in ipairs(STAT_ROWS) do f.statValues[i]:SetText(stat[2]()) end
+    RefreshChart(f)
 
     -- Settings tab
-    f.hideReal:SetChecked(db.hideReal)
-    f.showWidget:SetChecked(db.widget.shown)
-    f.lockWidget:SetChecked(db.widget.locked)
-    f.showMinimap:SetChecked(db.minimap.shown)
-    f.countMail:SetChecked(db.countMail)
-    f.scoldPopup:SetChecked(db.scoldPopup)
-    f.soundToggle:SetChecked(db.sound)
-    f.vendorWarn:SetChecked(db.vendorWarn)
+    for _, cb in ipairs(f.settingChecks) do cb:SetChecked(cb.get()) end
+    if db.keepSpendable > 0 then
+        f.keepText:SetText(L["Currently %s. The piggy won't save while you have less than this spendable."]:format(Money(db.keepSpendable)))
+    else
+        f.keepText:SetText(L["Currently off. Handy for keeping repair money. Leave the boxes empty and click Set to turn it off."])
+    end
 end
 
 function ui.ToggleWindow()
@@ -1114,26 +1361,28 @@ end
 
 Refresh = function()
     if not db then return end
+    UpdateAccount()
     RefreshOverlays()
     RefreshWidget()
     RefreshMinimapButton()
+    RefreshDataBroker()
     RefreshWindow()
 end
 
 -- Entry in Esc > Options > AddOns, so nobody has to remember a slash command.
 local function RegisterOptionsPanel()
     local panel = CreateFrame("Frame")
-    panel.name = "Piggy Bank"
-    Label(panel, "GameFontNormalLarge", "TOPLEFT", 16, -16):SetText("Piggy Bank")
+    panel.name = L["Piggy Bank"]
+    Label(panel, "GameFontNormalLarge", "TOPLEFT", 16, -16):SetText(L["Piggy Bank"])
     local desc = Label(panel, "GameFontHighlight", "TOPLEFT", 16, -44)
-    desc:SetText("All Piggy Bank settings live in the piggy's own window.")
-    Button(panel, "Open Piggy Bank", 160, function()
+    desc:SetText(L["All Piggy Bank settings live in the piggy's own window."])
+    Button(panel, L["Open Piggy Bank"], 160, function()
         if SettingsPanel and SettingsPanel:IsShown() then HideUIPanel(SettingsPanel) end
         if InterfaceOptionsFrame and InterfaceOptionsFrame:IsShown() then HideUIPanel(InterfaceOptionsFrame) end
         ui.window:Show()
     end):SetPoint("TOPLEFT", 16, -72)
     if Settings and Settings.RegisterCanvasLayoutCategory then
-        local category = Settings.RegisterCanvasLayoutCategory(panel, "Piggy Bank")
+        local category = Settings.RegisterCanvasLayoutCategory(panel, L["Piggy Bank"])
         Settings.RegisterAddOnCategory(category)
     elseif InterfaceOptions_AddCategory then
         InterfaceOptions_AddCategory(panel) -- older clients
@@ -1159,8 +1408,8 @@ end
 
 local function AddWarningLines(tooltip, price)
     tooltip:AddLine(" ")
-    tooltip:AddLine("|cffff5555Oink! You'll spend savings on this.|r")
-    tooltip:AddLine("Costs " .. Money(price) .. ", but you only have " .. Money(Spendable()) .. " spendable.", 1, 1, 1, true)
+    tooltip:AddLine("|cffff5555" .. L["Oink! You'll spend savings on this."] .. "|r")
+    tooltip:AddLine(L["Costs %s, but you only have %s spendable."]:format(Money(price), Money(Spendable())), 1, 1, 1, true)
 end
 
 local function WarningIcon(parent, getPrice)
@@ -1172,7 +1421,7 @@ local function WarningIcon(parent, getPrice)
     b.tex:SetTexture(WARN_ICON)
     b:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine("Piggy Bank")
+        GameTooltip:AddLine(L["Piggy Bank"])
         AddWarningLines(GameTooltip, getPrice())
         GameTooltip:Show()
     end)
@@ -1381,62 +1630,78 @@ end
 -- Events
 ---------------------------------------------------------------------------
 
--- Money moving through these windows is shuffling, not earning.
-local NOT_INCOME = {}
-for _, key in ipairs({ "Banker", "GuildBanker", "AccountBanker", "TradePartner", "MailInfo" }) do
+-- Windows reported through the newer interaction events. Bank and trade gold isn't
+-- income; mail is one of the income sources you can switch off.
+local INTERACTIONS = {}
+for key, name in pairs({ Banker = "Banker", GuildBanker = "GuildBanker", AccountBanker = "AccountBanker",
+    TradePartner = "TradePartner", MailInfo = "mail", Trainer = "Trainer" }) do
     local id = Enum.PlayerInteractionType and Enum.PlayerInteractionType[key]
-    if id then NOT_INCOME[id] = key end
+    if id then INTERACTIONS[id] = name end
 end
-local TRAINER_INTERACTION = Enum.PlayerInteractionType and Enum.PlayerInteractionType.Trainer
 
--- Older per-window events, used by Classic clients. Harmless duplicates elsewhere.
-local LEGACY_OPEN = {
-    BANKFRAME_OPENED = "Banker", GUILDBANKFRAME_OPENED = "GuildBanker",
-    TRADE_SHOW = "TradePartner", MAIL_SHOW = "MailInfo", TRAINER_SHOW = "Trainer",
-}
-local LEGACY_CLOSE = {
-    BANKFRAME_CLOSED = "Banker", GUILDBANKFRAME_CLOSED = "GuildBanker",
-    TRADE_CLOSED = "TradePartner", MAIL_CLOSED = "MailInfo", TRAINER_CLOSED = "Trainer",
+-- Per-window events. Classic relies on these; Retail fires most of them too.
+local WINDOW_EVENTS = {
+    BANKFRAME_OPENED = { "Banker", true },          BANKFRAME_CLOSED = { "Banker", false },
+    GUILDBANKFRAME_OPENED = { "GuildBanker", true }, GUILDBANKFRAME_CLOSED = { "GuildBanker", false },
+    TRADE_SHOW = { "TradePartner", true },          TRADE_CLOSED = { "TradePartner", false },
+    MAIL_SHOW = { "mail", true },                   MAIL_CLOSED = { "mail", false },
+    MERCHANT_SHOW = { "vendor", true },             MERCHANT_CLOSED = { "vendor", false },
+    LOOT_OPENED = { "loot", true },                 LOOT_CLOSED = { "loot", false },
+    QUEST_COMPLETE = { "quest", true },             QUEST_FINISHED = { "quest", false },
+    TRAINER_SHOW = { "Trainer", true },             TRAINER_CLOSED = { "Trainer", false },
 }
 
 local function WindowOpened(key)
     if key == "Trainer" then StartTrainerWatch() return end
-    if key and not (key == "MailInfo" and db.countMail) then busy[key] = true end
+    if key then windows[key] = true end
 end
 
 local function WindowClosed(key)
     if key == "Trainer" then StopTrainerWatch() return end
     -- money updates can land just after the window closes
-    if key and busy[key] then busy[key] = GetTime() + 1 end
+    if key and windows[key] then windows[key] = GetTime() + (key == "quest" and 2 or 1) end
 end
 
 local events = CreateFrame("Frame")
 local function Register(event)
     pcall(events.RegisterEvent, events, event) -- not every event exists in every game version
 end
-for _, event in ipairs({ "PLAYER_LOGIN", "PLAYER_MONEY", "ADDON_LOADED", "COMMODITY_PRICE_UPDATED",
+for _, event in ipairs({ "PLAYER_LOGIN", "PLAYER_MONEY", "ADDON_LOADED", "COMMODITY_PRICE_UPDATED", "QUEST_TURNED_IN",
     "PLAYER_INTERACTION_MANAGER_FRAME_SHOW", "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" }) do
     Register(event)
 end
-for event in pairs(LEGACY_OPEN) do Register(event) end
-for event in pairs(LEGACY_CLOSE) do Register(event) end
+for event in pairs(WINDOW_EVENTS) do Register(event) end
 
 events:SetScript("OnEvent", function(_, event, arg1, arg2)
     if event == "PLAYER_LOGIN" then
-        Print("OINK!! Use /Piggy to open your piggy bank, OINK!! You can also click the gold in your bag OINK OINK!")
         PiggyBankDB = PiggyBankDB or {}
         db = PiggyBankDB
         ApplyDefaults(db, DEFAULTS)
+        if db.countMail ~= nil then -- setting from before income filters existed
+            db.income.mail = db.countMail
+            db.countMail = nil
+        end
         db.stats.piggySince = db.stats.piggySince or time()
+        PruneHistory()
+
+        PiggyBankAccountDB = PiggyBankAccountDB or {}
+        account = PiggyBankAccountDB
+        account.chars = account.chars or {}
+        charKey = (UnitName("player") or "?") .. "-" .. (GetRealmName() or "?")
+
         lastMoney = GetMoney()
         if db.savings > lastMoney then
             db.savings = lastMoney
-            Print("Some savings were spent while the piggy wasn't looking. It now holds " .. Money(lastMoney) .. ".")
+            Print(L["Some savings were spent while the piggy wasn't looking. It now holds %s."]:format(Money(lastMoney)))
+        end
+        if db.loginMessage then
+            Print(L["OINK!! Use /Piggy to open your piggy bank, OINK!! You can also click the gold in your bag OINK OINK!"])
         end
         SetupBagOverlays()
         CreateWidget()
         CreateMinimapButton()
         CreateWindow()
+        SetupDataBroker()
         RegisterOptionsPanel()
         SetupMerchantWarnings()
         HookFlightPaths()
@@ -1455,14 +1720,16 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2)
     elseif event == "PLAYER_MONEY" then
         OnMoneyChanged()
         UpdateMerchantWarnings()
+    elseif event == "QUEST_TURNED_IN" then
+        -- Quests that finish without a reward window (bonus objectives, world quests)
+        windows.quest = GetTime() + 2
     elseif event == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" then
-        WindowOpened(arg1 == TRAINER_INTERACTION and "Trainer" or NOT_INCOME[arg1])
+        WindowOpened(INTERACTIONS[arg1])
     elseif event == "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" then
-        WindowClosed(arg1 == TRAINER_INTERACTION and "Trainer" or NOT_INCOME[arg1])
-    elseif LEGACY_OPEN[event] then
-        WindowOpened(LEGACY_OPEN[event])
-    elseif LEGACY_CLOSE[event] then
-        WindowClosed(LEGACY_CLOSE[event])
+        WindowClosed(INTERACTIONS[arg1])
+    elseif WINDOW_EVENTS[event] then
+        local key, opened = WINDOW_EVENTS[event][1], WINDOW_EVENTS[event][2]
+        if opened then WindowOpened(key) else WindowClosed(key) end
     end
 end)
 
@@ -1479,22 +1746,25 @@ SlashCmdList.PIGGYBANK = function(msg)
         ui.ToggleWindow()
     elseif cmd == "rate" and tonumber(rest) then
         SetRate(tonumber(rest))
-        Print("Now saving " .. db.rate .. "% of income.")
+        Print(L["Now saving %d%% of income."]:format(db.rate))
     elseif cmd == "goal" then
         local gold, name = rest:match("^(%S+)%s*(.*)$")
         local copper = GoldToCopper(gold)
-        if copper then AddGoal(name, copper) else Print("Usage: /piggy goal <gold> <name>") end
-    elseif cmd == "feed" and GoldToCopper(rest) then
+        if copper and copper > 0 then AddGoal(name, copper) else Print(L["Usage: /piggy goal <gold> <name>"]) end
+    elseif cmd == "feed" and (GoldToCopper(rest) or 0) > 0 then
         FeedPiggy(GoldToCopper(rest))
+    elseif cmd == "keep" and GoldToCopper(rest) then
+        SetKeepSpendable(GoldToCopper(rest))
     elseif cmd == "widget" then
         db.widget.shown = not db.widget.shown
-        Print("Floating piggy " .. (db.widget.shown and "always shown." or "hidden (it'll still pop up to scold you)."))
+        Print(db.widget.shown and L["Floating piggy always shown."] or L["Floating piggy hidden (it'll still pop up to scold you)."])
         Refresh()
     else
-        Print("/piggy - open the piggy (every setting is in there)")
-        Print("/piggy rate <0-" .. MAX_RATE .. "> - % of income to save")
-        Print("/piggy goal <gold> <name> - add a savings goal (e.g. 12.5 = 12g 50s)")
-        Print("/piggy feed <gold> - put gold in by hand")
-        Print("/piggy widget - show/hide the floating piggy")
+        Print(L["/piggy - open the piggy (every setting is in there)"])
+        Print(L["/piggy rate <0-%d> - %% of income to save"]:format(MAX_RATE))
+        Print(L["/piggy goal <gold> <name> - add a savings goal (e.g. 12.5 = 12g 50s)"])
+        Print(L["/piggy feed <gold> - put gold in by hand"])
+        Print(L["/piggy keep <gold> - always keep this much spendable (0 = off)"])
+        Print(L["/piggy widget - show/hide the floating piggy"])
     end
 end

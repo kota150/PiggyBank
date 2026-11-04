@@ -1,0 +1,48 @@
+name: Bug report
+description: Something in Piggy Bank isn't working right
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting! The details below help track the problem down quickly. 🐷
+  - type: dropdown
+    id: game
+    attributes:
+      label: Game version
+      options:
+        - Classic Era (Vanilla, Hardcore, Season of Discovery)
+        - WoW Forever
+        - Retail
+    validations:
+      required: true
+  - type: input
+    id: addon-version
+    attributes:
+      label: Piggy Bank version
+      description: Shown in the AddOns list on the character select screen, or on CurseForge.
+      placeholder: "1.4.0"
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, and what went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: lua-error
+    attributes:
+      label: Lua error (if any)
+      description: >
+        If the game showed an error, paste the full text here. To see errors, type
+        /console scriptErrors 1 in chat, or use an addon like BugSack.
+      render: text
+  - type: input
+    id: other-addons
+    attributes:
+      label: Bag or UI addons you use
+      description: For example Bagnon, Baganator, ElvUI. Many display issues depend on these.
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag images here if they help show the problem.

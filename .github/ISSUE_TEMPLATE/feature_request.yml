@@ -1,0 +1,24 @@
+name: Feature idea
+description: Suggest something new for Piggy Bank
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like the piggy to do?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why would it help?
+      description: What are you trying to do in game that this would make easier or more fun?
+  - type: dropdown
+    id: game
+    attributes:
+      label: Which game version do you play?
+      multiple: true
+      options:
+        - Classic Era (Vanilla, Hardcore, Season of Discovery)
+        - WoW Forever
+        - Retail
