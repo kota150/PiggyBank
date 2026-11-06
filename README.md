@@ -9,7 +9,7 @@ Works with **WoW Forever**, **Classic Era** (Vanilla, Hardcore, Season of Discov
 ## Features
 
 - **Automatic savings.** Pick a rate from 0–90% and that share of every gold gain goes into the piggy.
-- **Hidden gold.** Your bag money counter shows only your *spendable* gold. Hover over it for the full breakdown. Works with the default bags and **Bagnon**.
+- **Hidden gold.** Your bag money counter shows only your *spendable* gold. Hover over it for the full breakdown. Works with the default bags, **Bagnon** and **Baganator**.
 - **Choose what counts as income.** Looted gold, quest rewards, vendor sales, mailbox gold (auction sales) and everything else can each be switched on or off. Gold you pull out of a bank or get in a trade never counts.
 - **Always keep some spendable.** Set an amount, like repair money, and the piggy won't save while your spendable gold is below it.
 - **Savings goals.** Set up to 5 goals in gold, silver and copper, each with a progress bar. You get a raid-warning cheer when you reach one, then **Cash Out** releases exactly that amount without smashing the piggy.

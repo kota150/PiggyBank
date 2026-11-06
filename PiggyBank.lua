@@ -463,6 +463,57 @@ local function ShouldHide(moneyFrame, o)
     return true
 end
 
+-- Baganator draws gold as plain text in a "currency widget" (backpack and character bank).
+-- Every widget is updated through one mixin method, so we hook that and rewrite the text
+-- after Baganator does, but only while it's showing the character you're playing.
+local baganatorWidgets = {}
+
+local function IsBaganatorShowingMe(widget)
+    local current = Syndicator and Syndicator.API and Syndicator.API.GetCurrentCharacter and Syndicator.API.GetCurrentCharacter()
+    return current and widget.lastCharacter == current
+end
+
+local function ApplyBaganator(widget)
+    if not (widget.Money and widget:IsVisible() and IsBaganatorShowingMe(widget)) then return end
+    if db.hideReal then
+        local icon = "|T" .. PIG_ICON .. ":0|t "
+        widget.Money:SetText(icon .. GetMoneyString(Spendable(), true):gsub("|T", " |T"))
+        widget.piggyApplied = true
+    elseif widget.piggyApplied then
+        widget.piggyApplied = nil
+        widget:UpdateCurrencies(widget.lastCharacter) -- let Baganator put the real total back
+        return
+    else
+        return
+    end
+    if widget.UpdateCurrencyTextPositions and widget.allowedWidth then
+        widget:UpdateCurrencyTextPositions(widget.allowedWidth, widget.nextRowWidth)
+    end
+end
+
+local baganatorHooked = false
+local function HookBaganator()
+    if baganatorHooked or not (BaganatorCurrencyWidgetMixin and BaganatorCurrencyWidgetMixin.UpdateCurrencies) then return end
+    baganatorHooked = true
+    hooksecurefunc(BaganatorCurrencyWidgetMixin, "UpdateCurrencies", function(widget)
+        if not baganatorWidgets[widget] then
+            baganatorWidgets[widget] = true
+            -- Add the piggy's numbers under Baganator's own gold tooltip
+            if widget.Money and widget.Money.HookScript then
+                widget.Money:HookScript("OnEnter", function()
+                    if not (db and IsBaganatorShowingMe(widget)) then return end
+                    GameTooltip:AddLine(" ")
+                    GameTooltip:AddDoubleLine(L["Piggy Bank"], "", 1, 0.53, 0.8)
+                    GameTooltip:AddDoubleLine(L["In the piggy"], Money(db.savings), 1, 1, 1, 1, 1, 1)
+                    GameTooltip:AddDoubleLine(L["Spendable"], Money(Spendable()), 1, 1, 1, 1, 1, 1)
+                    GameTooltip:Show()
+                end)
+            end
+        end
+        if db then ApplyBaganator(widget) end
+    end)
+end
+
 local function RefreshOverlays()
     local text = Money(Spendable())
     for moneyFrame, o in pairs(overlays) do
@@ -472,6 +523,7 @@ local function RefreshOverlays()
         o.text:SetText(text)
         o.icon:SetDesaturated(db.broken)
     end
+    for widget in pairs(baganatorWidgets) do ApplyBaganator(widget) end
 end
 
 local function CreateOverlay(moneyFrame, checkOwner)
@@ -1672,7 +1724,12 @@ for _, event in ipairs({ "PLAYER_LOGIN", "PLAYER_MONEY", "ADDON_LOADED", "COMMOD
 end
 for event in pairs(WINDOW_EVENTS) do Register(event) end
 
+-- Baganator builds its bag windows at login, after this file loads. Its widgets copy the
+-- mixin's methods when they're created, so the hook has to be in place before then.
+HookBaganator()
+
 events:SetScript("OnEvent", function(_, event, arg1, arg2)
+    if event == "ADDON_LOADED" and arg1 == "Baganator" then HookBaganator() end
     if event == "PLAYER_LOGIN" then
         PiggyBankDB = PiggyBankDB or {}
         db = PiggyBankDB

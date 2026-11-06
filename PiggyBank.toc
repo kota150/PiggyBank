@@ -4,6 +4,7 @@
 ## Author: Kota150
 ## Version: @project-version@
 ## X-Curse-Project-ID: 1776064
+## OptionalDeps: Baganator, Bagnon
 ## SavedVariables: PiggyBankAccountDB
 ## SavedVariablesPerCharacter: PiggyBankDB
 ## IconTexture: Interface\Icons\Ability_Hunter_Pet_Boar
