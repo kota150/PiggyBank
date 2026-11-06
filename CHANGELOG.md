@@ -2,6 +2,11 @@
 
 All notable changes to Piggy Bank are listed here.
 
+## [1.4.1] - 2026-11-05
+
+### Added
+- **Baganator support.** Baganator's backpack and bank gold now shows only your spendable gold, and hovering it adds the piggy's numbers under Baganator's gold tooltip. Other characters' bags and the Warband bank keep their real amounts.
+
 ## [1.4.0] - 2026-11-04
 
 ### Added
@@ -10,7 +15,6 @@ All notable changes to Piggy Bank are listed here.
 - **Cash out goals.** When a goal is reached, a **Cash Out** button on the Goals tab releases exactly that amount without smashing the piggy.
 - **Savings history.** The Stats tab has a 7-day chart and a "Saved this week" total.
 - **All characters.** The Stats tab and tooltips show your combined savings across every character. Hover the row for a per-character list.
-- **Baganator support:** Baganator's backpack and bank gold shows only spendable gold too, with the piggy's numbers added to its gold tooltip. Other characters' bags are left alone.
 - **Info bar support** for Titan Panel, ElvUI DataTexts, Bazooka, ChocolateBar and other LibDataBroker displays.
 - **Translation support.** All text can now be translated. See TRANSLATING.md.
 - A setting to turn off the login message.
