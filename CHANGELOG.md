@@ -4,6 +4,10 @@ All notable changes to Piggy Bank are listed here.
 
 ## [1.4.2] - 2026-11-06
 
+### Added
+- **Piggy ranks.** Your piggy levels up as your lifetime savings grow, from *Piglet in Training* all the way to *The Gold Cap Hog*, with a cheer every time you rank up. Your rank shows on the Piggy tab and in the tooltip, and hovering it on the Stats tab lists every rank and how far you are from the next one. Ranks come from lifetime savings, so smashing the piggy never costs you one.
+- **Goal ETA.** Each goal shows roughly how long until you reach it at your current pace, based on the last 7 days of saving (for example "25% · ~3 days").
+
 ### Fixed
 - Piggy Bank wasn't showing up as a download for **WoW Forever** on CurseForge. Releases are now tagged for Forever automatically.
 

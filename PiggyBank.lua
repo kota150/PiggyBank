@@ -21,6 +21,22 @@ local COIN_ICONS = {
 
 local CoinString = (C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString) or GetCoinTextureString
 
+-- Piggy ranks, earned by lifetime savings (in gold), so smashing the piggy never demotes you.
+local RANKS = {
+    { 0,      L["Piglet in Training"] },
+    { 1,      L["Copper Piglet"] },
+    { 10,     L["Silver Sow"] },
+    { 50,     L["Golden Hog"] },
+    { 100,    L["Bacon Baron"] },
+    { 250,    L["Lord of the Swine"] },
+    { 500,    L["Ham-perial Treasurer"] },
+    { 1000,   L["Gilded Boar"] },
+    { 5000,   L["Hogger's Accountant"] },
+    { 10000,  L["Legendary Swine of Azeroth"] },
+    { 50000,  L["Trade Prince Porkington"] },
+    { 100000, L["The Gold Cap Hog"] },
+}
+
 local DEFAULTS = {
     rate = 10,          -- % of income that goes into the piggy
     savings = 0,        -- copper currently in the piggy
@@ -141,6 +157,23 @@ local function SavedThisWeek()
     return total
 end
 
+-- Average saved per day over the last week (or since this piggy started, if that's sooner).
+local function DailyPace()
+    local since = db.stats.piggySince or time()
+    local days = math.max(1, math.min(7, math.ceil((time() - since) / DAY)))
+    return SavedThisWeek() / days
+end
+
+-- Roughly how long until a goal is reached at the current pace.
+local function GoalETA(goal)
+    if db.broken then return L["paused"] end
+    local pace = DailyPace()
+    if pace <= 0 then return L["save a bit to see an ETA"] end
+    local days = math.ceil((goal.target - db.savings) / pace)
+    if days <= 1 then return L["~1 day"] end
+    return L["~%d days"]:format(days)
+end
+
 local function PruneHistory()
     local cutoff = DayKey(time() - HISTORY_DAYS * DAY)
     for key in pairs(db.history) do
@@ -205,6 +238,22 @@ local function CheckGoals()
     end
 end
 
+local function RankFor(lifetime)
+    local rank = 1
+    for i, r in ipairs(RANKS) do
+        if lifetime >= r[1] * COPPER_PER_GOLD then rank = i end
+    end
+    return rank
+end
+
+local function CheckRank()
+    local rank = RankFor(db.lifetime)
+    if rank > db.rank then
+        db.rank = rank
+        Celebrate(L["Piggy rank up! You're now a |cffffd100%s|r. Oink!"]:format(RANKS[rank][2]))
+    end
+end
+
 local function AddToPiggy(copper)
     db.savings = db.savings + copper
     db.lifetime = db.lifetime + copper
@@ -212,6 +261,7 @@ local function AddToPiggy(copper)
     local today = DayKey()
     db.history[today] = (db.history[today] or 0) + copper
     CheckGoals()
+    CheckRank()
 end
 
 local function PickRandom(list, last)
@@ -418,6 +468,7 @@ end
 
 local function FillTooltip(tooltip)
     tooltip:AddLine(L["Piggy Bank"] .. (db.broken and (" |cffff5555(" .. L["smashed"] .. ")|r") or ""))
+    tooltip:AddLine(RANKS[db.rank][2], 1, 0.82, 0)
     tooltip:AddDoubleLine(L["Spendable"], Money(Spendable()), 1, 1, 1, 1, 1, 1)
     tooltip:AddDoubleLine(L["In the piggy"], Money(db.savings), 1, 0.53, 0.8, 1, 1, 1)
     if db.broken then
@@ -432,7 +483,8 @@ local function FillTooltip(tooltip)
     for _, goal in ipairs(db.goals) do
         local pct = math.min(100, math.floor(db.savings / goal.target * 100))
         local r, g = goal.reached and 0.2 or 1, goal.reached and 1 or 0.82
-        tooltip:AddDoubleLine(goal.name, pct .. "%", r, g, 0, r, g, 0)
+        local right = goal.reached and (pct .. "%") or (pct .. "% (" .. GoalETA(goal) .. ")")
+        tooltip:AddDoubleLine(goal.name, right, r, g, 0, r, g, 0)
     end
     tooltip:AddLine(L["Click to open the piggy."], 0.5, 0.5, 0.5)
 end
@@ -926,7 +978,9 @@ end
 local TAB_NAMES = { L["Piggy"], L["Goals"], L["Stats"], L["Settings"] }
 
 local function BuildPiggyPage(f, page)
-    Header(page, L["In the Piggy"], 0)
+    local _, piggyLine = Header(page, L["In the Piggy"], 0)
+    f.rankText = Label(page, "GameFontNormal", "TOPRIGHT", -8, 0)
+    piggyLine:SetPoint("RIGHT", f.rankText, "LEFT", -8, 0)
     f.savingsCoins = CoinDisplay(page, "GameFontHighlightLarge", 18)
     f.savingsCoins:SetPoint("TOPLEFT", 12, -24)
     f.status = Label(page, "GameFontHighlightSmall", "TOPLEFT", 12, -50)
@@ -1037,8 +1091,27 @@ local function BuildGoalsPage(f, page)
     Label(page, "GameFontDisableSmall", "TOPLEFT", 12, -344):SetText(L["Reached a goal? Click Cash Out to spend just that amount."])
 end
 
+local function NextRankText()
+    local next = RANKS[db.rank + 1]
+    if not next then return L["Top rank!"] end
+    return L["Next: %s in %s"]:format(next[2], Money(next[1] * COPPER_PER_GOLD - db.lifetime))
+end
+
+local function AddRankLines(tooltip)
+    tooltip:AddLine(NextRankText(), 1, 1, 1)
+    tooltip:AddLine(" ")
+    for i, r in ipairs(RANKS) do
+        local reached = i <= db.rank
+        local color = reached and 1 or 0.5
+        tooltip:AddDoubleLine((reached and "|TInterface\\RaidFrame\\ReadyCheck-Ready:0|t " or "    ") .. r[2],
+            Money(r[1] * COPPER_PER_GOLD), color, color * 0.82, reached and 0 or color, color, color, color)
+    end
+    tooltip:AddLine(L["Ranks come from lifetime savings, so smashing the piggy never costs you one."], 0.6, 0.6, 0.6, true)
+end
+
 -- { label, value function, optional tooltip function }
 local STAT_ROWS = {
+    { "Piggy rank",                 function() return RANKS[db.rank][2] end, AddRankLines },
     { "Current savings rate", function()
         return db.broken and ("|cffff5555" .. L["smashed (start a new one)"] .. "|r") or (db.rate .. "%")
     end },
@@ -1065,7 +1138,7 @@ local function BuildStatsPage(f, page)
     Header(page, L["Statistics"], 0)
     f.statValues = {}
     for i, stat in ipairs(STAT_ROWS) do
-        local y = -22 - (i - 1) * 22
+        local y = -22 - (i - 1) * 21
         local row = CreateFrame("Frame", nil, page)
         row:SetPoint("TOPLEFT", 4, y + 2)
         row:SetPoint("RIGHT", page, "RIGHT", -4, 0)
@@ -1088,9 +1161,9 @@ local function BuildStatsPage(f, page)
     end
 
     -- Last 7 days bar chart
-    local top = -22 - #STAT_ROWS * 22 - 8
+    local top = -22 - #STAT_ROWS * 21 - 8
     Header(page, L["Last 7 Days"], top)
-    local baseline = top - 72
+    local baseline = top - 62
     f.chart = {}
     local slot = 330 / 7
     for i = 1, 7 do
@@ -1100,7 +1173,7 @@ local function BuildStatsPage(f, page)
         bar:SetPoint("BOTTOMLEFT", page, "TOPLEFT", x + (slot - 26) / 2, baseline)
         local day = Label(page, "GameFontDisableSmall", "TOP", bar, "BOTTOM", 0, -2)
         local hover = CreateFrame("Frame", nil, page)
-        hover:SetSize(slot, 60)
+        hover:SetSize(slot, 50)
         hover:SetPoint("BOTTOMLEFT", page, "TOPLEFT", x, baseline - 14)
         hover:EnableMouse(true)
         hover:SetScript("OnEnter", function(self)
@@ -1343,7 +1416,7 @@ local function RefreshChart(f)
     for i, col in ipairs(f.chart) do
         local daysAgo = 7 - i
         local t = time() - daysAgo * DAY
-        col.bar:SetHeight(max > 0 and math.max(1, 56 * amounts[i] / max) or 1)
+        col.bar:SetHeight(max > 0 and math.max(1, 44 * amounts[i] / max) or 1)
         col.bar:SetColorTexture(1, 0.53, 0.8, daysAgo == 0 and 1 or 0.6)
         col.day:SetText(date("%a", t))
         col.hover.dayName = daysAgo == 0 and L["Today"] or date("%A", t)
@@ -1356,6 +1429,7 @@ local function RefreshWindow()
     if not f:IsShown() then return end
 
     -- Piggy tab
+    f.rankText:SetText(RANKS[db.rank][2])
     f.savingsCoins:SetAmount(db.savings)
     f.spendableCoins:SetAmount(Spendable())
     if db.broken then
@@ -1386,7 +1460,7 @@ local function RefreshWindow()
             row.amount:SetShown(not goal.reached)
             row.cashOut:SetShown(goal.reached)
             row.bar:SetValue(progress)
-            row.pct:SetText(goal.reached and L["Complete!"] or (math.floor(progress * 100) .. "%"))
+            row.pct:SetText(goal.reached and L["Complete!"] or (math.floor(progress * 100) .. "%  ·  " .. GoalETA(goal)))
             if goal.reached then row.bar:SetStatusBarColor(0.1, 0.8, 0.1) else row.bar:SetStatusBarColor(1, 0.53, 0.8) end
         end
     end
@@ -1739,6 +1813,7 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2)
             db.countMail = nil
         end
         db.stats.piggySince = db.stats.piggySince or time()
+        db.rank = db.rank or RankFor(db.lifetime) -- existing piggies start at the rank they've earned, no toast
         PruneHistory()
 
         PiggyBankAccountDB = PiggyBankAccountDB or {}

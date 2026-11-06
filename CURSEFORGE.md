@@ -16,11 +16,12 @@ Works with **Classic Era** (Vanilla, Hardcore, Season of Discovery), **WoW Forev
 - **Hidden gold.** Your bag money counter shows only your *spendable* gold. Works with the default bags, **Bagnon** and **Baganator**.
 - **Choose what counts as income.** Looted gold, quest rewards, vendor sales, auction sales and everything else can each be switched on or off. Bank and trade gold never counts.
 - **Always keep some spendable.** Set an amount, like repair money, and the piggy won't save below it. Great for Classic and Hardcore.
-- **Savings goals.** Up to 5 goals in gold, silver and copper, with progress bars, a cheer when you reach one, and a **Cash Out** button that releases just that goal's gold.
+- **Savings goals.** Up to 5 goals in gold, silver and copper, with progress bars, a time-to-go estimate, a cheer when you reach one, and a **Cash Out** button that releases just that goal's gold.
 - **Spending warnings.** Vendors, Repair All, trainers, flight masters and the auction house flag anything that would dip into your savings.
 - **Smash it.** Whack the piggy 3 times to release your savings. A broken piggy stops saving until you start a new one (free, one click).
 - **Get scolded.** Spend your savings and the piggy pops up with one of 26 painfully cheesy puns.
   > *"Hogger is disappointed in you. And Hogger eats people."*
+- **Piggy ranks.** Level up from *Piglet in Training* to *The Gold Cap Hog* as your lifetime savings grow.
 - **Stats.** A 7-day savings chart, your total across all characters, lifetime saved, goals cashed out, piggies smashed, times caught raiding the piggy, and more.
 - **Info bar support.** Titan Panel, ElvUI DataTexts, Bazooka, ChocolateBar and other LibDataBroker displays.
 - **Translatable.** Want Piggy Bank in your language? See TRANSLATING.md on GitHub.
