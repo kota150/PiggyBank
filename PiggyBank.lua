@@ -733,14 +733,67 @@ end
 -- Minimap button
 ---------------------------------------------------------------------------
 
+-- When another addon has loaded LibDBIcon (most minimap-button addons do), the piggy joins
+-- it, so it lines up with everyone else's buttons and works with button-bag and minimap
+-- skin addons. Otherwise we draw our own button using the same ring LibDBIcon uses.
+local ICON_NAME = "Piggy Bank"
+
+local function GetDBIcon()
+    return ui.broker and LibStub and LibStub("LibDBIcon-1.0", true)
+end
+
+-- Which quarters of the minimap are round, per minimap shape (LibDBIcon's table).
+local MINIMAP_SHAPES = {
+    ["ROUND"] = { true, true, true, true },
+    ["SQUARE"] = { false, false, false, false },
+    ["CORNER-TOPLEFT"] = { false, false, false, true },
+    ["CORNER-TOPRIGHT"] = { false, false, true, false },
+    ["CORNER-BOTTOMLEFT"] = { false, true, false, false },
+    ["CORNER-BOTTOMRIGHT"] = { true, false, false, false },
+    ["SIDE-LEFT"] = { false, true, false, true },
+    ["SIDE-RIGHT"] = { true, false, true, false },
+    ["SIDE-TOP"] = { false, false, true, true },
+    ["SIDE-BOTTOM"] = { true, true, false, false },
+    ["TRICORNER-TOPLEFT"] = { false, true, true, true },
+    ["TRICORNER-TOPRIGHT"] = { true, false, true, true },
+    ["TRICORNER-BOTTOMLEFT"] = { true, true, false, true },
+    ["TRICORNER-BOTTOMRIGHT"] = { true, true, true, false },
+}
+
 local function PlaceMinimapButton(b)
     local angle = math.rad(db.minimap.angle or 225)
-    local radius = Minimap:GetWidth() / 2 + 10
+    local x, y = math.cos(angle), math.sin(angle)
+    local q = 1
+    if x < 0 then q = q + 1 end
+    if y > 0 then q = q + 2 end
+    local shape = GetMinimapShape and GetMinimapShape() or "ROUND"
+    local quadTable = MINIMAP_SHAPES[shape] or MINIMAP_SHAPES.ROUND
+    local w = Minimap:GetWidth() / 2 + 5
+    local h = Minimap:GetHeight() / 2 + 5
+    if quadTable[q] then
+        x, y = x * w, y * h
+    else
+        local diagW = math.sqrt(2 * w * w) - 10
+        local diagH = math.sqrt(2 * h * h) - 10
+        x = math.max(-w, math.min(x * diagW, w))
+        y = math.max(-h, math.min(y * diagH, h))
+    end
     b:ClearAllPoints()
-    b:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * radius, math.sin(angle) * radius)
+    b:SetPoint("CENTER", Minimap, "CENTER", x, y)
 end
 
 local function CreateMinimapButton()
+    local DBIcon = GetDBIcon()
+    if DBIcon then
+        -- LibDBIcon saves its own keys (hide, minimapPos) in this table.
+        db.minimap.minimapPos = db.minimap.minimapPos or db.minimap.angle
+        db.minimap.hide = not db.minimap.shown
+        DBIcon:Register(ICON_NAME, ui.broker, db.minimap)
+        ui.minimapButton = DBIcon:GetMinimapButton(ICON_NAME)
+        ui.usingDBIcon = true
+        return
+    end
+
     local b = CreateFrame("Button", "PiggyBankMinimapButton", Minimap)
     b:SetSize(31, 31)
     b:SetFrameStrata("MEDIUM")
@@ -750,17 +803,17 @@ local function CreateMinimapButton()
     b:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
 
     local border = b:CreateTexture(nil, "OVERLAY")
-    border:SetSize(53, 53)
+    border:SetSize(50, 50)
     border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
     border:SetPoint("TOPLEFT")
     local bg = b:CreateTexture(nil, "BACKGROUND")
-    bg:SetSize(20, 20)
+    bg:SetSize(24, 24)
     bg:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
-    bg:SetPoint("TOPLEFT", 7, -5)
+    bg:SetPoint("CENTER")
     b.icon = b:CreateTexture(nil, "ARTWORK")
-    b.icon:SetSize(17, 17)
+    b.icon:SetSize(18, 18)
     b.icon:SetTexture(PIG_ICON)
-    b.icon:SetPoint("TOPLEFT", 7, -6)
+    b.icon:SetPoint("CENTER")
 
     -- Drag around the edge of the minimap
     b:SetScript("OnDragStart", function(self)
@@ -782,9 +835,15 @@ local function CreateMinimapButton()
 end
 
 local function RefreshMinimapButton()
+    if ui.usingDBIcon then
+        local DBIcon = GetDBIcon()
+        db.minimap.hide = not db.minimap.shown
+        if db.minimap.shown then DBIcon:Show(ICON_NAME) else DBIcon:Hide(ICON_NAME) end
+    else
+        ui.minimapButton:SetShown(db.minimap.shown)
+    end
     local b = ui.minimapButton
-    b:SetShown(db.minimap.shown)
-    b.icon:SetDesaturated(db.broken)
+    if b and b.icon then b.icon:SetDesaturated(db.broken) end
 end
 
 ---------------------------------------------------------------------------
@@ -1831,9 +1890,9 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2)
         end
         SetupBagOverlays()
         CreateWidget()
+        SetupDataBroker() -- before the minimap button, which can use its data object
         CreateMinimapButton()
         CreateWindow()
-        SetupDataBroker()
         RegisterOptionsPanel()
         SetupMerchantWarnings()
         HookFlightPaths()
