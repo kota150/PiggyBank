@@ -2,6 +2,11 @@
 
 All notable changes to Piggy Bank are listed here.
 
+## [1.4.2] - 2026-11-06
+
+### Fixed
+- Piggy Bank wasn't showing up as a download for **WoW Forever** on CurseForge. Releases are now tagged for Forever automatically.
+
 ## [1.4.1] - 2026-11-05
 
 ### Added
