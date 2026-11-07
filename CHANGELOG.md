@@ -6,6 +6,9 @@ All notable changes to Piggy Bank are listed here.
 
 ### Fixed
 - The minimap button no longer sits on a different ring from other addons' buttons, which made them look pushed into the map. When another addon has loaded LibDBIcon (most minimap buttons use it), the piggy now joins it, so it lines up with the others and works with minimap button bags. Otherwise it uses the same spacing and size as LibDBIcon buttons, and follows square minimaps too.
+- Far-off goals now say "~3 months" or "over a year" instead of "~4526 days".
+- Hovering a day on the Stats chart no longer covers the "Last 7 Days" heading.
+- The Settings scroll bar has a track behind it, and its thumb no longer shows up as a plain grey square.
 
 ## [1.4.2] - 2026-11-06
 

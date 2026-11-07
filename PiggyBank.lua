@@ -171,6 +171,8 @@ local function GoalETA(goal)
     if pace <= 0 then return L["save a bit to see an ETA"] end
     local days = math.ceil((goal.target - db.savings) / pace)
     if days <= 1 then return L["~1 day"] end
+    if days > 365 then return L["over a year"] end
+    if days > 60 then return L["~%d months"]:format(math.floor(days / 30 + 0.5)) end
     return L["~%d days"]:format(days)
 end
 
@@ -1232,11 +1234,12 @@ local function BuildStatsPage(f, page)
         bar:SetPoint("BOTTOMLEFT", page, "TOPLEFT", x + (slot - 26) / 2, baseline)
         local day = Label(page, "GameFontDisableSmall", "TOP", bar, "BOTTOM", 0, -2)
         local hover = CreateFrame("Frame", nil, page)
-        hover:SetSize(slot, 50)
+        hover:SetSize(slot, 60)
         hover:SetPoint("BOTTOMLEFT", page, "TOPLEFT", x, baseline - 14)
         hover:EnableMouse(true)
         hover:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            -- Below the bars, so it doesn't cover the "Last 7 Days" heading
+            GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
             GameTooltip:AddDoubleLine(self.dayName or "", Money(self.amount or 0), 1, 0.82, 0, 1, 1, 1)
             GameTooltip:Show()
         end)
@@ -1257,6 +1260,20 @@ local function BuildSettingsPage(f, page)
             local max = self:GetVerticalScrollRange()
             self:SetVerticalScroll(math.max(0, math.min(max, self:GetVerticalScroll() - delta * 30)))
         end)
+    end
+    -- Give the scroll bar a dark track, so the thumb doesn't float on its own
+    local bar = scroll.ScrollBar or _G["PiggyBankSettingsScrollScrollBar"]
+    if bar then
+        local track = bar:CreateTexture(nil, "BACKGROUND")
+        track:SetPoint("TOPLEFT", 0, 16)
+        track:SetPoint("BOTTOMRIGHT", 0, -16)
+        track:SetColorTexture(0, 0, 0, 0.4)
+        local thumb = bar.GetThumbTexture and bar:GetThumbTexture()
+        if thumb then -- crop the knob art's empty edges, like Blizzard's own scroll bars
+            thumb:SetTexture("Interface\\Buttons\\UI-ScrollBar-Knob")
+            thumb:SetTexCoord(0.2, 0.8, 0.125, 0.875)
+            thumb:SetSize(18, 24)
+        end
     end
     local child = CreateFrame("Frame", nil, scroll)
     child:SetWidth(326)
